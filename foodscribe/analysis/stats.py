@@ -179,7 +179,11 @@ class MealAnalyser:
             plt.show()
 
     def print_table(
-        self, rows: list[NutrientRow], summary: MealSummary, show_category: bool = False
+        self,
+        rows: list[NutrientRow],
+        summary: MealSummary,
+        show_category: bool = False,
+        show_all_nutrients: bool = False,
     ) -> None:
         try:
             from rich.table import Table
@@ -227,6 +231,22 @@ class MealAnalyser:
                     f"Dominant category:    {summary.dominant_category}"
                     f"  ({dom_e:.0f} kcal, {dom_pct:.0f}% of meal energy)"
                 )
+
+            if show_all_nutrients:
+                # Aggregate all_nutrients across rows
+                totals: dict[str, float] = {}
+                for r in rows:
+                    for nutrient, val in (r.all_nutrients or {}).items():
+                        totals[nutrient] = totals.get(nutrient, 0.0) + val
+
+                if totals:
+                    nt = Table(title="Full Nutrient Panel (meal totals)", show_header=True)
+                    nt.add_column("Nutrient", style="bold")
+                    nt.add_column("Amount", justify="right")
+                    for nutrient, val in sorted(totals.items()):
+                        nt.add_row(nutrient, f"{val:.3g}")
+                    console.print(nt)
+
         except ImportError:
             headers = ["Food", "kcal", "Prot(g)", "Carb(g)", "Fat(g)", "Fiber(g)"]
             if show_category:

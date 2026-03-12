@@ -77,6 +77,7 @@ def parse(
     plot: bool = typer.Option(False, "--plot", help="Show matplotlib plots (all four)"),
     save_plots: str = typer.Option(None, help="Save plots as PNG to this directory"),
     show_category: bool = typer.Option(False, "--show-category", help="Add Category/Subcategory columns"),
+    all_nutrients: bool = typer.Option(False, "--all-nutrients", help="Show full micronutrient panel for the meal"),
     data_dir: str = typer.Option(None, envvar="FOODSCRIBE_DATA_DIR", help="Data directory path"),
 ) -> None:
     """Parse a meal description and return USDA nutrient profile."""
@@ -135,7 +136,7 @@ def parse(
 
     # Stage 4: summarise + display
     summary = analyser.summarise(rows)
-    analyser.print_table(rows, summary, show_category=show_category)
+    analyser.print_table(rows, summary, show_category=show_category, show_all_nutrients=all_nutrients)
 
     if plot or save_plots:
         plots_dir = Path(save_plots) if save_plots else None
