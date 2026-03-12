@@ -93,25 +93,20 @@ Macronutrient split:  Protein 17%  |  Carbs 53%  |  Fat 30%
 
 Example 2: foodscribe parse "for dinner i had 200g of chicken biriyani"
 
-Output: Meal Nutrient Profile                                             
+Meal Nutrient Profile                                             
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
 ┃ Food (USDA match)                        ┃ Grams ┃ Energy(kcal) ┃ Protein(g) ┃ Carb(g) ┃ Fat(g) ┃ Fiber(g) ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
-│ Chicken, ground, raw                     │   150 │          214 │       26.1 │     0.1 │   12.1 │      0.0 │
-│ Rice, white, medium-grain, cooked, unenr │    50 │           65 │        1.2 │    14.3 │    0.1 │      0.0 │
-│ Onions, raw                              │    30 │           11 │        0.3 │     2.5 │    0.0 │      0.5 │
-│ Yogurt, plain, whole milk                │    20 │            0 │        0.8 │     1.1 │    0.9 │      0.0 │
-│ Oil, vegetable, soybean, refined         │     8 │           71 │        0.0 │     0.0 │    8.0 │      0.0 │
-│ Spices, garlic powder                    │     5 │           17 │        0.8 │     3.6 │    0.0 │      0.5 │
-│ Spices, cumin seed                       │     1 │            4 │        0.2 │     0.4 │    0.2 │      0.1 │
-│ Spices, cinnamon, ground                 │     0 │            1 │        0.0 │     0.4 │    0.0 │      0.3 │
-│ Spices, cardamom                         │     0 │            2 │        0.1 │     0.3 │    0.0 │      0.1 │
-│ Salt, table                              │     2 │            0 │        0.0 │     0.0 │    0.0 │      0.0 │
+│ Chicken, broilers or fryers, meat only,  │   100 │          190 │       28.9 │     0.0 │    7.4 │      0.0 │
+│ Rice, white, short-grain, enriched, cook │    70 │           91 │        1.7 │    20.1 │    0.1 │      0.0 │
+│ Onions, raw                              │    15 │            6 │        0.2 │     1.4 │    0.0 │      0.3 │
+│ Yogurt, plain, low fat                   │    10 │            6 │        0.5 │     0.7 │    0.2 │      0.0 │
+│ Oil, olive, salad or cooking             │     5 │           44 │        0.0 │     0.0 │    5.0 │      0.0 │
 ├──────────────────────────────────────────┼───────┼──────────────┼────────────┼─────────┼────────┼──────────┤
-│ TOTAL                                    │       │          385 │       29.4 │    22.8 │   21.5 │      1.5 │
+│ TOTAL                                    │       │          338 │       31.2 │    22.2 │   12.7 │      0.3 │
 └──────────────────────────────────────────┴───────┴──────────────┴────────────┴─────────┴────────┴──────────┘
 
-Macronutrient split:  Protein 29%  |  Carbs 23%  |  Fat 48%
+Macronutrient split:  Protein 38%  |  Carbs 27%  |  Fat 35%
 
 Example 3: foodscribe parse "for lunch i has a small plate of fish and chips with a can of coca cola"
 
