@@ -38,7 +38,7 @@ Download the four pre-built data files and place them in the `data/` folder:
 | `foods_wide.csv` | All nutrients per food (wide format) |
 | `food_embeddings_mpnet.npy` | 768-dim MPNet embeddings for semantic search |
 
-> **Download:** [Zenodo dataset — DOI to be added after upload](https://zenodo.org)
+> **Download:** [10.5281/zenodo.18990541.](https://doi.org/10.5281/zenodo.18990542)
 
 ```bash
 # After downloading, move all four files into:
