@@ -44,16 +44,6 @@ Download the four pre-built data files and place them in the `data/` folder:
 # After downloading, move all four files into:
 data/
 ```
-
-### Option 2 — Build from raw USDA CSVs (advanced)
-
-If you want to rebuild the data files yourself, download the long-format CSVs from [USDA FoodData Central](https://fdc.nal.usda.gov/download-datasets) (Foundation, SR Legacy, Survey/FNDDS) and run:
-
-```bash
-python scripts/build_data.py --usda-dir /path/to/USDA_data/ --data-dir data/
-# Add --skip-embeddings to skip the slow embedding step (~30 min on CPU)
-```
-
 ---
 
 ## Environment Variables
