@@ -14,7 +14,7 @@ FoodScribe turns free-text meal descriptions into structured nutrient profiles g
 ## Installation
 
 ```bash
-git clone 
+git clone https://github.com/harsha-gouda/foodscribe.git
 cd foodscribe
 pip install -e .
 ```
