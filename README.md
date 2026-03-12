@@ -27,7 +27,7 @@ pip install -e .
 
 ## Data Setup
 
-### Option 1 — Download pre-built files (recommended)
+Download pre-built embedding files
 
 Download the four pre-built data files and place them in the `data/` folder:
 
