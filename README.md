@@ -320,8 +320,3 @@ output/
     └── journal_summary.csv   # Per-meal totals: all macro + micro nutrients
 ```
 
----
-
-## License
-
-MIT — see [LICENSE](LICENSE).
