@@ -27,7 +27,7 @@ pip install -e .
 
 ## Data Setup
 
-### Option 1 — Download pre-built files (recommended)
+Download pre-built embedding files
 
 Download the four pre-built data files and place them in the `data/` folder:
 
@@ -38,22 +38,12 @@ Download the four pre-built data files and place them in the `data/` folder:
 | `foods_wide.csv` | All nutrients per food (wide format) |
 | `food_embeddings_mpnet.npy` | 768-dim MPNet embeddings for semantic search |
 
-> **Download:** [Zenodo dataset — DOI to be added after upload](https://zenodo.org)
+> **Download:** [10.5281/zenodo.18990541.](https://doi.org/10.5281/zenodo.18990542)
 
 ```bash
 # After downloading, move all four files into:
 data/
 ```
-
-### Option 2 — Build from raw USDA CSVs (advanced)
-
-If you want to rebuild the data files yourself, download the long-format CSVs from [USDA FoodData Central](https://fdc.nal.usda.gov/download-datasets) (Foundation, SR Legacy, Survey/FNDDS) and run:
-
-```bash
-python scripts/build_data.py --usda-dir /path/to/USDA_data/ --data-dir data/
-# Add --skip-embeddings to skip the slow embedding step (~30 min on CPU)
-```
-
 ---
 
 ## Environment Variables
@@ -86,7 +76,53 @@ foodscribe use-provider anthropic
 
 ### Parse a single meal
 ```bash
-foodscribe parse-meal "2 scrambled eggs with toast and orange juice"
+Example1: foodscribe parse "2 scrambled eggs with toast and orange juice"
+
+Output: Meal Nutrient Profile                                           
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
+┃ Food (USDA match)                     ┃ Grams ┃ Energy(kcal) ┃ Protein(g) ┃ Carb(g) ┃ Fat(g) ┃ Fiber(g) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
+│ Egg, whole, cooked, scrambled         │   100 │          149 │       10.0 │     1.6 │   11.0 │      0.0 │
+│ Bread, white, toasted                 │    56 │          164 │        5.8 │    30.3 │    2.2 │      1.4 │
+│ Orange juice, 100%,  freshly squeezed │   240 │          113 │        1.9 │    24.0 │    0.9 │      0.7 │
+├───────────────────────────────────────┼───────┼──────────────┼────────────┼─────────┼────────┼──────────┤
+│ TOTAL                                 │       │          426 │       17.8 │    55.9 │   14.1 │      2.1 │
+└───────────────────────────────────────┴───────┴──────────────┴────────────┴─────────┴────────┴──────────┘
+
+Macronutrient split:  Protein 17%  |  Carbs 53%  |  Fat 30%
+
+Example 2: foodscribe parse "for dinner i had 200g of chicken biriyani"
+
+Meal Nutrient Profile                                             
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
+┃ Food (USDA match)                        ┃ Grams ┃ Energy(kcal) ┃ Protein(g) ┃ Carb(g) ┃ Fat(g) ┃ Fiber(g) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
+│ Chicken, broilers or fryers, meat only,  │   100 │          190 │       28.9 │     0.0 │    7.4 │      0.0 │
+│ Rice, white, short-grain, enriched, cook │    70 │           91 │        1.7 │    20.1 │    0.1 │      0.0 │
+│ Onions, raw                              │    15 │            6 │        0.2 │     1.4 │    0.0 │      0.3 │
+│ Yogurt, plain, low fat                   │    10 │            6 │        0.5 │     0.7 │    0.2 │      0.0 │
+│ Oil, olive, salad or cooking             │     5 │           44 │        0.0 │     0.0 │    5.0 │      0.0 │
+├──────────────────────────────────────────┼───────┼──────────────┼────────────┼─────────┼────────┼──────────┤
+│ TOTAL                                    │       │          338 │       31.2 │    22.2 │   12.7 │      0.3 │
+└──────────────────────────────────────────┴───────┴──────────────┴────────────┴─────────┴────────┴──────────┘
+
+Macronutrient split:  Protein 38%  |  Carbs 27%  |  Fat 35%
+
+Example 3: foodscribe parse "for lunch i has a small plate of fish and chips with a can of coca cola"
+
+Output: Meal Nutrient Profile                                            
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
+┃ Food (USDA match)                       ┃ Grams ┃ Energy(kcal) ┃ Protein(g) ┃ Carb(g) ┃ Fat(g) ┃ Fiber(g) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
+│ Fish, mackerel, fried                   │   150 │          426 │       25.8 │    17.5 │   27.3 │      0.8 │
+│ Potato, french fries, from fresh, fried │   120 │          238 │        2.3 │    22.2 │   15.7 │      1.9 │
+│ Soft drink, cola                        │   375 │          158 │        0.0 │    39.0 │    0.9 │      0.0 │
+├─────────────────────────────────────────┼───────┼──────────────┼────────────┼─────────┼────────┼──────────┤
+│ TOTAL                                   │       │          821 │       28.1 │    78.8 │   44.0 │      2.7 │
+└─────────────────────────────────────────┴───────┴──────────────┴────────────┴─────────┴────────┴──────────┘
+
+Macronutrient split:  Protein 14%  |  Carbs 38%  |  Fat 48%
+
 ```
 
 ### Batch process a food journal CSV
