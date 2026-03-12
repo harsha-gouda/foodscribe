@@ -76,7 +76,7 @@ foodscribe use-provider anthropic
 
 ### Parse a single meal
 ```bash
-Example1: foodscribe parse-meal "2 scrambled eggs with toast and orange juice"
+Example1: foodscribe parse "2 scrambled eggs with toast and orange juice"
 
 Output: Meal Nutrient Profile                                           
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
@@ -91,7 +91,7 @@ Output: Meal Nutrient Profile
 
 Macronutrient split:  Protein 17%  |  Carbs 53%  |  Fat 30%
 
-Example 2: foodscribe parse "200g of chicken biriyani"
+Example 2: foodscribe parse "for dinner i had 200g of chicken biriyani"
 
 Output: Meal Nutrient Profile                                             
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
@@ -130,12 +130,6 @@ Macronutrient split:  Protein 14%  |  Carbs 38%  |  Fat 48%
 
 ```
 
-```bash
-
-
-
-
-```
 ### Batch process a food journal CSV
 ```bash
 # Step 1 — LLM parsing (CSV must have a column with meal descriptions)
