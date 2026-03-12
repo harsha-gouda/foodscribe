@@ -1,0 +1,27 @@
+# Secrets — never commit
+.env
+
+# Generated data files (rebuild with: python scripts/build_data.py)
+data/*.csv
+data/*.npy
+data/*.pkl
+data/*.parquet
+!data/.gitkeep
+
+# Input/output folders (user data and analysis results)
+input/
+output/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+.eggs/
+*.egg
+
+# OS
+.DS_Store
+Thumbs.db

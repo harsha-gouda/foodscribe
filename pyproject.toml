@@ -1,0 +1,32 @@
+[project]
+name = "foodscribe"
+version = "0.1.0"
+description = "LLM-powered food diary parser with USDA nutrient lookup"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "typer[all]>=0.12",
+    "anthropic>=0.30",
+    "openai>=1.30",
+    "google-generativeai>=0.7",
+    "sentence-transformers>=3.0",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+    "rich>=13",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-mock>=3"]
+
+[project.scripts]
+foodscribe = "foodscribe.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["foodscribe*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

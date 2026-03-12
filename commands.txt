@@ -1,0 +1,389 @@
+================================================================================
+FoodScribe CLI — Command Reference
+================================================================================
+
+SETUP
+-----
+  pip install -e .
+  # Copy .env.example to .env and fill in your API key(s)
+
+--------------------------------------------------------------------------------
+use-provider
+--------------------------------------------------------------------------------
+Set the default LLM provider (saved to .env — persists across sessions).
+
+  foodscribe use-provider PROVIDER
+
+  PROVIDER: anthropic | openai | deepseek | gemini
+
+  Examples:
+    foodscribe use-provider anthropic
+    foodscribe use-provider deepseek
+
+  Notes:
+    - Sets FOODSCRIBE_LLM_PROVIDER in .env
+    - To set a default model, add FOODSCRIBE_LLM_MODEL=<model> to .env manually
+      e.g. FOODSCRIBE_LLM_MODEL=claude-sonnet-4-6
+
+--------------------------------------------------------------------------------
+parse
+--------------------------------------------------------------------------------
+Parse a single meal description and display a USDA nutrient profile table.
+
+  foodscribe parse MEAL_TEXT [OPTIONS]
+
+  Arguments:
+    MEAL_TEXT          Free-text meal description (quoted string)
+
+  Options:
+    --provider TEXT    LLM provider: anthropic | openai | deepseek | gemini
+                       (env: FOODSCRIBE_LLM_PROVIDER)
+    --model TEXT       Model name override
+                       (env: FOODSCRIBE_LLM_MODEL)
+    --top-k INT        Retrieval candidates per item  [default: 3]
+    --json             Output raw JSON instead of table
+    --plot             Show all four matplotlib plots interactively
+    --save-plots DIR   Save plots as PNG files to DIR/
+    --show-category    Add Category / Subcategory columns to the table
+    --data-dir DIR     Data directory path
+                       (env: FOODSCRIBE_DATA_DIR, default: data/)
+
+  Examples:
+    foodscribe parse "2 scrambled eggs with toast and orange juice"
+    foodscribe parse "oatmeal with banana" --show-category
+    foodscribe parse "grilled salmon with brown rice" --provider deepseek
+    foodscribe parse "chicken tikka masala" --model claude-sonnet-4-6
+    foodscribe parse "pizza margherita" --json
+    foodscribe parse "bowl of oatmeal" --plot
+    foodscribe parse "steak with fries" --save-plots output/plots/
+
+--------------------------------------------------------------------------------
+analyse
+--------------------------------------------------------------------------------
+Analyse a single meal (with category breakdown) or aggregate stats from a CSV.
+
+  foodscribe analyse [OPTIONS]
+
+  Options:
+    --meal TEXT        Single meal description string
+    --csv PATH         CSV file with a 'meal' column — shows aggregate stats
+                       and box plots across all meals
+    --provider TEXT    LLM provider  (env: FOODSCRIBE_LLM_PROVIDER)
+    --data-dir DIR     Data directory path  (env: FOODSCRIBE_DATA_DIR)
+
+  Examples:
+    foodscribe analyse --meal "chicken tikka masala with naan"
+    foodscribe analyse --csv my_meals.csv
+    echo "bowl of oatmeal" | foodscribe analyse   # reads from stdin
+
+--------------------------------------------------------------------------------
+categories
+--------------------------------------------------------------------------------
+Look up USDA food categories.
+
+  foodscribe categories [OPTIONS]
+
+  Options:
+    --fdc-id INT       Look up category for a specific USDA fdc_id
+    --list             Print all available top-level categories
+    --filter TEXT      Show up to 50 foods matching a category name
+    --data-dir DIR     Data directory path  (env: FOODSCRIBE_DATA_DIR)
+
+  Examples:
+    foodscribe categories --fdc-id 171705
+    foodscribe categories --list
+    foodscribe categories --filter "Poultry Products"
+    foodscribe categories --filter "Vegetables and Vegetable Products"
+
+--------------------------------------------------------------------------------
+batch
+--------------------------------------------------------------------------------
+One-shot: run the full pipeline (LLM + retrieval) on all CSVs in input/.
+Use batch-parse + batch-nutrients instead if you want resume support or
+want to inspect LLM output before retrieval.
+
+  foodscribe batch [OPTIONS]
+
+  Options:
+    --input-dir DIR    Folder with input CSV files  [default: input]
+    --output-dir DIR   Folder for output CSVs       [default: output]
+    --meal-col TEXT    Meal text column name         [default: meal]
+    --provider TEXT    LLM provider  (env: FOODSCRIBE_LLM_PROVIDER)
+    --model TEXT       Model name override
+    --top-k INT        Retrieval candidates per item [default: 3]
+    --data-dir DIR     Data directory  (env: FOODSCRIBE_DATA_DIR)
+
+  Input CSV must have a meal text column (default name: "meal").
+  All other columns (Record_ID, Date, etc.) are NOT carried to output
+  — use batch-parse + batch-nutrients for that.
+
+  Output per input CSV:
+    <name>_summary.csv  — one row per meal: energy_kcal, protein_g, carb_g,
+                          fat_g, fiber_g, item_count
+    <name>_detail.csv   — one row per ingredient: grams, nutrients, category,
+                          subcategory, confidence
+
+  Examples:
+    foodscribe batch
+    foodscribe batch --input-dir data/meals/ --output-dir results/
+    foodscribe batch --meal-col description
+
+--------------------------------------------------------------------------------
+batch-parse                                               [STEP 1 of 2-step flow]
+--------------------------------------------------------------------------------
+LLM step only: parse meal text into ingredients and save to *_parsed.csv.
+Supports resume — re-run the same command to process the next batch.
+
+  foodscribe batch-parse [INPUT_FILE] [OPTIONS]
+
+  Arguments:
+    INPUT_FILE         (optional) CSV file to process — filename or full path.
+                       If omitted, all CSVs in --input-dir are processed.
+
+  Options:
+    --input-dir DIR    Folder with input CSV files       [default: input]
+                       (only used when INPUT_FILE is not given)
+    --output-dir DIR   Base output folder                [default: output]
+    --run-id TEXT      Run subfolder name (auto: run_YYYYMMDD_HHMMSS).
+                       Pass an existing run_id to resume an interrupted run.
+    --meal-col TEXT    Meal text column name              [default: meal]
+    --provider TEXT    LLM provider  (env: FOODSCRIBE_LLM_PROVIDER)
+    --model TEXT       Model name override
+    --limit INT        Max rows to process per run; 0 = no limit
+                       [default: 200]
+
+  Each run creates:  output/run_YYYYMMDD_HHMMSS/
+  The Run ID is printed at startup — copy it to resume later.
+
+  Input CSV columns: any — must include the meal text column.
+  All non-meal columns (Record_ID, Date, Patient, etc.) are automatically
+  carried through to the output.
+
+  Output per input CSV (inside the run folder):
+    <name>_parsed.csv  — one row per ingredient:
+      row, <all original columns>, meal, ingredient, qty, unit, grams, confidence
+
+  Resume behaviour:
+    If <name>_parsed.csv already exists in the run folder, rows already
+    present are skipped. New rows are appended. Re-run with the same
+    --run-id until all rows are processed.
+
+  Examples:
+    foodscribe batch-parse CCFA_7day_journal.csv        # single file by name
+    foodscribe batch-parse CCFA_7day_journal.csv --limit 50
+    foodscribe batch-parse /data/meals/study.csv        # full path
+    foodscribe batch-parse                              # all CSVs in input/
+    foodscribe batch-parse --limit 0                   # process all rows at once
+    foodscribe batch-parse --limit 50                  # 50 rows per run
+    foodscribe batch-parse --run-id run_20241201_1430  # resume a previous run
+    foodscribe batch-parse --meal-col FoodNote
+    foodscribe batch-parse --model claude-sonnet-4-6
+
+--------------------------------------------------------------------------------
+batch-nutrients                                           [STEP 2 of 2-step flow]
+--------------------------------------------------------------------------------
+Retrieval step only: take *_parsed.csv files and produce nutrient profiles.
+No LLM calls — fast local USDA lookup. Can be re-run freely on the same
+parsed file at any time (e.g. after editing ingredient names or gram weights).
+
+  foodscribe batch-nutrients [OPTIONS]
+
+  Options:
+    --output-dir DIR   Base output folder (same as used for batch-parse)
+                       [default: output]
+    --run-id TEXT      Run subfolder to process.
+                       Default: auto-detects the latest run_* subfolder.
+                       Pass explicitly to target a specific run.
+    --top-k INT        Retrieval candidates per item    [default: 3]
+    --data-dir DIR     Data directory  (env: FOODSCRIBE_DATA_DIR)
+
+  Required columns in *_parsed.csv:
+    row, meal, ingredient, grams, confidence
+    (all other columns are carried through automatically)
+
+  Output per *_parsed.csv — both files include all extra columns from the
+  original input (Record_ID, Date, Patient, etc.):
+
+  <name>_summary.csv — one row per meal, columns:
+    row
+    <extra columns from input, e.g. Record_ID, Date, Patient>
+    meal
+    energy_kcal      — total meal energy
+    protein_g        — total protein
+    carb_g           — total carbohydrate
+    fat_g            — total fat
+    fiber_g          — total dietary fiber
+    item_count       — number of ingredients with USDA matches
+
+  <name>_detail.csv — one row per ingredient, columns:
+    row
+    <extra columns from input, e.g. Record_ID, Date, Patient>
+    meal
+    ingredient       — USDA matched food description
+    grams            — gram weight used for scaling
+    energy_kcal      — scaled energy for this ingredient
+    protein_g        — scaled protein
+    carb_g           — scaled carbohydrate
+    fat_g            — scaled fat
+    fiber_g          — scaled fiber
+    category         — USDA food category
+    subcategory      — USDA food subcategory
+    confidence       — LLM confidence score (1-5)
+
+  Notes:
+    - USDA nutrient values are per 100g; scaled by grams/100 automatically.
+    - If grams is null/missing in parsed CSV, raw per-100g values are used.
+    - --top-k controls how many USDA candidates are retrieved per ingredient;
+      the best cosine-similarity match is always used regardless of top-k.
+    - Re-run after editing *_parsed.csv to correct misidentified ingredients.
+
+  Examples:
+    foodscribe batch-nutrients                              # auto-detects latest run
+    foodscribe batch-nutrients --run-id run_20241201_1430  # specific run
+    foodscribe batch-nutrients --top-k 5
+
+  Downstream analysis with pandas:
+    import pandas as pd
+    summary = pd.read_csv("output/meals_summary.csv")
+    detail  = pd.read_csv("output/meals_detail.csv")
+
+    # Total calories per patient
+    summary.groupby("Patient")["energy_kcal"].mean()
+
+    # Average protein by date
+    summary.groupby("Date")["protein_g"].mean()
+
+    # All dairy ingredients across all meals
+    detail[detail["category"] == "Dairy and Egg Products"]
+
+    # Meals above 800 kcal
+    summary[summary["energy_kcal"] > 800][["Record_ID", "Date", "meal", "energy_kcal"]]
+
+    # Macro distribution across all meals
+    summary[["protein_g", "carb_g", "fat_g"]].describe()
+
+================================================================================
+PYTHON API — foodscribe.analysis.stats
+================================================================================
+Use these directly in scripts or notebooks when you don't need the CLI.
+
+  from foodscribe.analysis.stats import MealAnalyser, MealSummary
+
+--- MealAnalyser.summarise(rows) ---
+Compute macro totals and category breakdown from a list of NutrientRow objects.
+
+  summary = analyser.summarise(rows)
+
+  Returns MealSummary with fields:
+    total_energy_kcal   float   — sum of energy across all items
+    total_protein_g     float   — sum of protein
+    total_carb_g        float   — sum of carbohydrate
+    total_fat_g         float   — sum of total fat
+    total_fiber_g       float   — sum of dietary fiber
+    pct_protein_kcal    float   — protein % of macro calories (0-100)
+    pct_carb_kcal       float   — carb % of macro calories
+    pct_fat_kcal        float   — fat % of macro calories
+    item_count          int     — number of NutrientRow items
+    categories_present  list    — sorted list of unique USDA categories
+    dominant_category   str|None — category contributing most energy
+
+--- MealAnalyser.print_table(rows, summary, show_category=False) ---
+Print a rich formatted nutrient table to the terminal.
+
+  analyser.print_table(rows, summary)
+  analyser.print_table(rows, summary, show_category=True)
+
+  Columns: Food (USDA match), [Category, Subcategory,] Grams, Energy(kcal),
+           Protein(g), Carb(g), Fat(g), Fiber(g)
+  Footer:  TOTAL row with summed values
+  Styling: rows with confidence <= 2 are highlighted yellow
+           "100*" in Grams means no explicit gram weight — raw per-100g values used
+
+--- MealAnalyser.plot_macros_pie(summary, save_path=None) ---
+Pie chart of macronutrient split (Protein / Carbs / Fat % of calories).
+
+  analyser.plot_macros_pie(summary)
+  analyser.plot_macros_pie(summary, save_path="output/macros_pie.png")
+
+--- MealAnalyser.plot_energy_distribution(rows, save_path=None) ---
+Horizontal bar chart: energy (kcal) contribution per food item, with % label.
+
+  analyser.plot_energy_distribution(rows)
+  analyser.plot_energy_distribution(rows, save_path="output/energy_dist.png")
+
+--- MealAnalyser.plot_nutrient_bars(rows, save_path=None) ---
+Grouped bar chart: normalised protein / carb / fat per item, with energy on
+a secondary axis.
+
+  analyser.plot_nutrient_bars(rows)
+  analyser.plot_nutrient_bars(rows, save_path="output/nutrient_bars.png")
+
+--- MealAnalyser.plot_category_breakdown(rows, save_path=None) ---
+Horizontal bar chart of energy per item, coloured by USDA food category.
+Legend shows all categories present in the meal.
+
+  analyser.plot_category_breakdown(rows)
+  analyser.plot_category_breakdown(rows, save_path="output/category_breakdown.png")
+
+  Notes:
+    - All plot methods show the plot interactively if save_path is None.
+    - If save_path is given the figure is saved at 150 dpi and closed.
+    - The parse CLI exposes all four plots via --plot and --save-plots DIR.
+
+--- CLI shortcut for all four plots ---
+  foodscribe parse "oatmeal with banana" --plot
+  foodscribe parse "oatmeal with banana" --save-plots output/plots/
+
+================================================================================
+TYPICAL WORKFLOWS
+================================================================================
+
+--- Single meal (interactive) ---
+  foodscribe use-provider anthropic
+  foodscribe parse "bowl of oatmeal with banana and honey" --show-category
+
+--- Small batch (one-shot) ---
+  foodscribe batch --input-dir input/ --output-dir output/
+
+--- Large batch with resume support ---
+  # First run — creates output/run_20241201_143022/ automatically
+  # Terminal prints: "Run ID: run_20241201_143022  (pass --run-id ... to resume)"
+  foodscribe batch-parse CCFA_7day_journal.csv --limit 200
+
+  # Resume the same run (same folder, skips already-done rows)
+  foodscribe batch-parse CCFA_7day_journal.csv --run-id run_20241201_143022 --limit 200
+  # ... repeat until "Parsing complete" with no "[limit reached]" message
+
+  # Retrieval — auto-detects the latest run folder
+  foodscribe batch-nutrients
+
+  # Or target a specific run explicitly
+  foodscribe batch-nutrients --run-id run_20241201_143022
+
+  # Output folder structure:
+  # output/
+  #   run_20241201_143022/
+  #     meals_parsed.csv
+  #     meals_summary.csv
+  #     meals_detail.csv
+  #   run_20241205_090000/
+  #     meals_parsed.csv
+  #     ...
+
+--- Switch provider mid-project ---
+  foodscribe use-provider openai
+  foodscribe batch-parse --limit 200   # starts a new run folder
+
+================================================================================
+ENVIRONMENT VARIABLES (.env)
+================================================================================
+  ANTHROPIC_API_KEY       = sk-ant-...
+  OPENAI_API_KEY          = sk-...
+  DEEPSEEK_API_KEY        = ...
+  GOOGLE_API_KEY          = ...
+
+  FOODSCRIBE_LLM_PROVIDER = anthropic      # set by use-provider command
+  FOODSCRIBE_LLM_MODEL    = claude-sonnet-4-6   # optional model override
+  FOODSCRIBE_DATA_DIR     = data/          # path to built data files
+  KMP_DUPLICATE_LIB_OK    = TRUE           # suppress OpenMP warning on Windows
+================================================================================
