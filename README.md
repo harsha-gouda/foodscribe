@@ -76,9 +76,66 @@ foodscribe use-provider anthropic
 
 ### Parse a single meal
 ```bash
-foodscribe parse-meal "2 scrambled eggs with toast and orange juice"
+Example1: foodscribe parse-meal "2 scrambled eggs with toast and orange juice"
+
+Output: Meal Nutrient Profile                                           
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
+┃ Food (USDA match)                     ┃ Grams ┃ Energy(kcal) ┃ Protein(g) ┃ Carb(g) ┃ Fat(g) ┃ Fiber(g) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
+│ Egg, whole, cooked, scrambled         │   100 │          149 │       10.0 │     1.6 │   11.0 │      0.0 │
+│ Bread, white, toasted                 │    56 │          164 │        5.8 │    30.3 │    2.2 │      1.4 │
+│ Orange juice, 100%,  freshly squeezed │   240 │          113 │        1.9 │    24.0 │    0.9 │      0.7 │
+├───────────────────────────────────────┼───────┼──────────────┼────────────┼─────────┼────────┼──────────┤
+│ TOTAL                                 │       │          426 │       17.8 │    55.9 │   14.1 │      2.1 │
+└───────────────────────────────────────┴───────┴──────────────┴────────────┴─────────┴────────┴──────────┘
+
+Macronutrient split:  Protein 17%  |  Carbs 53%  |  Fat 30%
+
+Example 2: foodscribe parse "200g of chicken biriyani"
+
+Output: Meal Nutrient Profile                                             
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
+┃ Food (USDA match)                        ┃ Grams ┃ Energy(kcal) ┃ Protein(g) ┃ Carb(g) ┃ Fat(g) ┃ Fiber(g) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
+│ Chicken, ground, raw                     │   150 │          214 │       26.1 │     0.1 │   12.1 │      0.0 │
+│ Rice, white, medium-grain, cooked, unenr │    50 │           65 │        1.2 │    14.3 │    0.1 │      0.0 │
+│ Onions, raw                              │    30 │           11 │        0.3 │     2.5 │    0.0 │      0.5 │
+│ Yogurt, plain, whole milk                │    20 │            0 │        0.8 │     1.1 │    0.9 │      0.0 │
+│ Oil, vegetable, soybean, refined         │     8 │           71 │        0.0 │     0.0 │    8.0 │      0.0 │
+│ Spices, garlic powder                    │     5 │           17 │        0.8 │     3.6 │    0.0 │      0.5 │
+│ Spices, cumin seed                       │     1 │            4 │        0.2 │     0.4 │    0.2 │      0.1 │
+│ Spices, cinnamon, ground                 │     0 │            1 │        0.0 │     0.4 │    0.0 │      0.3 │
+│ Spices, cardamom                         │     0 │            2 │        0.1 │     0.3 │    0.0 │      0.1 │
+│ Salt, table                              │     2 │            0 │        0.0 │     0.0 │    0.0 │      0.0 │
+├──────────────────────────────────────────┼───────┼──────────────┼────────────┼─────────┼────────┼──────────┤
+│ TOTAL                                    │       │          385 │       29.4 │    22.8 │   21.5 │      1.5 │
+└──────────────────────────────────────────┴───────┴──────────────┴────────────┴─────────┴────────┴──────────┘
+
+Macronutrient split:  Protein 29%  |  Carbs 23%  |  Fat 48%
+
+Example 3: foodscribe parse "for lunch i has a small plate of fish and chips with a can of coca cola"
+
+Output: Meal Nutrient Profile                                            
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
+┃ Food (USDA match)                       ┃ Grams ┃ Energy(kcal) ┃ Protein(g) ┃ Carb(g) ┃ Fat(g) ┃ Fiber(g) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
+│ Fish, mackerel, fried                   │   150 │          426 │       25.8 │    17.5 │   27.3 │      0.8 │
+│ Potato, french fries, from fresh, fried │   120 │          238 │        2.3 │    22.2 │   15.7 │      1.9 │
+│ Soft drink, cola                        │   375 │          158 │        0.0 │    39.0 │    0.9 │      0.0 │
+├─────────────────────────────────────────┼───────┼──────────────┼────────────┼─────────┼────────┼──────────┤
+│ TOTAL                                   │       │          821 │       28.1 │    78.8 │   44.0 │      2.7 │
+└─────────────────────────────────────────┴───────┴──────────────┴────────────┴─────────┴────────┴──────────┘
+
+Macronutrient split:  Protein 14%  |  Carbs 38%  |  Fat 48%
+
 ```
 
+```bash
+
+
+
+
+```
 ### Batch process a food journal CSV
 ```bash
 # Step 1 — LLM parsing (CSV must have a column with meal descriptions)
