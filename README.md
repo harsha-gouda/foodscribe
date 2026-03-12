@@ -27,19 +27,32 @@ pip install -e .
 
 ## Data Setup
 
-FoodScribe requires pre-built lookup tables derived from the USDA FoodData Central CSVs. Download the long-format CSVs (Foundation, SR Legacy, Survey/FNDDS) and run:
+### Option 1 — Download pre-built files (recommended)
+
+Download the four pre-built data files and place them in the `data/` folder:
+
+| File | Description |
+|------|-------------|
+| `food_metadata.csv` | Food descriptions and categories |
+| `food_categories.csv` | Category/subcategory per food |
+| `foods_wide.csv` | All nutrients per food (wide format) |
+| `food_embeddings_mpnet.npy` | 768-dim MPNet embeddings for semantic search |
+
+> **Download:** [Zenodo dataset — DOI to be added after upload](https://zenodo.org)
+
+```bash
+# After downloading, move all four files into:
+data/
+```
+
+### Option 2 — Build from raw USDA CSVs (advanced)
+
+If you want to rebuild the data files yourself, download the long-format CSVs from [USDA FoodData Central](https://fdc.nal.usda.gov/download-datasets) (Foundation, SR Legacy, Survey/FNDDS) and run:
 
 ```bash
 python scripts/build_data.py --usda-dir /path/to/USDA_data/ --data-dir data/
+# Add --skip-embeddings to skip the slow embedding step (~30 min on CPU)
 ```
-
-This produces four files in `data/`:
-- `food_metadata.csv` — food descriptions and categories
-- `food_categories.csv` — category/subcategory per food
-- `foods_wide.csv` — all nutrients per food (wide format, units in column names)
-- `food_embeddings_mpnet.npy` — 768-dim MPNet embeddings for semantic search
-
-Add `--skip-embeddings` to skip the slow embedding step (requires GPU/CPU for ~30 min).
 
 ---
 
