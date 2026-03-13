@@ -166,8 +166,8 @@ class LLMClient:
 
         results: list[FoodItem] = []
         for obj in data:
-            # Accept both "ingredients" (new prompt) and "item" (legacy)
-            name = obj.get("ingredients") or obj.get("item")
+            # Accept all field name variants across prompt versions
+            name = obj.get("Ingredient") or obj.get("ingredients") or obj.get("item")
             if not name:
                 continue
             if "confidence" not in obj:
