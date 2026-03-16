@@ -107,8 +107,10 @@ def parse(
         return
 
     # Stage 2: retrieve fdc_ids
+    # Pass meal_text as context so MPNet can disambiguate by preparation style
     queries = [item.item for item in items]
-    batch_results = retriever.retrieve_batch(queries, top_k=top_k)
+    contexts = [meal_text] * len(queries)
+    batch_results = retriever.retrieve_batch(queries, top_k=top_k, contexts=contexts)
 
     # Stage 3: nutrient lookup
     from foodscribe.nutrients.lookup import NutrientRow
@@ -213,7 +215,7 @@ def analyse(
     def _run_meal(text: str):
         items = llm.parse_meal(text)
         queries = [i.item for i in items]
-        batch = retriever.retrieve_batch(queries)
+        batch = retriever.retrieve_batch(queries, contexts=[text] * len(queries))
         rows = []
         for item, cands in zip(items, batch):
             if not cands:
@@ -477,7 +479,9 @@ def batch_nutrients(
             grams_list  = grp["grams"].tolist()
             conf_list   = grp["confidence"].tolist()
 
-            batch_results = retriever.retrieve_batch(ingredients, top_k=top_k)
+            batch_results = retriever.retrieve_batch(
+                ingredients, top_k=top_k, contexts=[meal_text] * len(ingredients)
+            )
             rows = []
             for ingredient, grams, conf, cands in zip(ingredients, grams_list, conf_list, batch_results):
                 if not cands:
@@ -580,7 +584,7 @@ def batch(
         if not items:
             return []
         queries = [i.item for i in items]
-        batch_results = retriever.retrieve_batch(queries, top_k=top_k)
+        batch_results = retriever.retrieve_batch(queries, top_k=top_k, contexts=[text] * len(queries))
         rows = []
         for item, cands in zip(items, batch_results):
             if not cands:
