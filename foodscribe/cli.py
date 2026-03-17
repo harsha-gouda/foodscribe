@@ -502,15 +502,19 @@ def batch_nutrients(
             for r in rows:
                 for k, v in (r.all_nutrients or {}).items():
                     all_nutrient_totals[k] = round(all_nutrient_totals.get(k, 0.0) + v, 4)
+            valid_conf = [int(c) for c in conf_list if pd.notna(c)]
+            avg_conf = round(sum(valid_conf) / len(valid_conf), 2) if valid_conf else None
             summary_records.append({
                 "row":        row_idx,
                 **extra,
                 "meal":       meal_text,
+                "ingredients": "; ".join(ingredients),
+                "avg_confidence": avg_conf,
                 "item_count":  summary.item_count,
                 "dominant_category": _s(summary.dominant_category),
                 **all_nutrient_totals,
             })
-            for r in rows:
+            for ingredient, r in zip(ingredients, rows):
                 nutrient_cols = {
                     k: round(v, 4) for k, v in (r.all_nutrients or {}).items()
                 }
@@ -518,6 +522,7 @@ def batch_nutrients(
                     "row":        row_idx,
                     **extra,
                     "meal":       meal_text,
+                    "ingredient": ingredient,
                     "fdc_id":     r.fdc_id,
                     "usda_match": r.description,
                     "grams":      r._grams or 100,

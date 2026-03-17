@@ -102,12 +102,13 @@ class LLMClient:
     def _call_anthropic(self, meal_text: str) -> str:
         import anthropic
         client = anthropic.Anthropic(api_key=self.api_key)
+        system = SYSTEM_PROMPT.format(meal_description=meal_text)
         for attempt in range(3):
             try:
                 response = client.messages.create(
                     model=self.model,
                     max_tokens=1024,
-                    system=SYSTEM_PROMPT,
+                    system=system,
                     messages=[{"role": "user", "content": meal_text}],
                 )
                 return response.content[0].text
@@ -120,11 +121,12 @@ class LLMClient:
     def _call_openai_compat(self, meal_text: str, base_url: str) -> str:
         import openai
         client = openai.OpenAI(base_url=base_url, api_key=self.api_key)
+        system = SYSTEM_PROMPT.format(meal_description=meal_text)
         response = client.chat.completions.create(
             model=self.model,
             max_tokens=1024,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": meal_text},
             ],
         )
@@ -134,7 +136,7 @@ class LLMClient:
         import google.generativeai as genai
         genai.configure(api_key=self.api_key)
         model = genai.GenerativeModel(self.model)
-        response = model.generate_content(SYSTEM_PROMPT + "\n" + meal_text)
+        response = model.generate_content(SYSTEM_PROMPT.format(meal_description=meal_text))
         return response.text
 
     # ------------------------------------------------------------------
