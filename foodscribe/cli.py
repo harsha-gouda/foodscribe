@@ -295,8 +295,11 @@ def batch_parse(
     Output columns: row, <original columns>, meal, ingredient, qty, unit, grams, confidence
     Run batch-nutrients --run-id <same id> on the output to get USDA nutrient profiles.
     """
+    import json
     import pandas as pd
     from datetime import datetime
+
+    _parse_start = datetime.now()
 
     # Resolve which CSV files to process
     if input_file:
@@ -330,6 +333,8 @@ def batch_parse(
     batch_size = limit if limit > 0 else None
     source_desc = csv_files[0] if input_file else f"{Path(input_dir)}/"
     typer.echo(f"Parsing {len(csv_files)} file(s) from {source_desc} → {out_dir}/  (limit={batch_size or 'none'})\n")
+
+    _parse_file_stats: list[dict] = []
 
     for csv_path in csv_files:
         df = pd.read_csv(csv_path)
@@ -403,11 +408,34 @@ def batch_parse(
                 new_df.to_csv(out_path, index=False)
             typer.echo(f"  -> {out_path}  (+{len(records)} rows)")
 
+        _parse_file_stats.append({
+            "file": csv_path.name,
+            "total_rows": len(df),
+            "rows_processed_this_run": processed,
+            "rows_done_previously": len(done_rows),
+        })
+
+    # Write / update run_metadata.json
+    _meta_path = out_dir / "run_metadata.json"
+    _meta: dict = json.loads(_meta_path.read_text()) if _meta_path.exists() else {"run_id": _run_id}
+    _meta["batch_parse"] = {
+        "started_at":        _parse_start.isoformat(timespec="seconds"),
+        "completed_at":      datetime.now().isoformat(timespec="seconds"),
+        "duration_seconds":  round((datetime.now() - _parse_start).total_seconds(), 1),
+        "provider":          llm.provider,
+        "model":             llm.model,
+        "row_limit_per_run": batch_size or "none",
+        "files":             _parse_file_stats,
+    }
+    _meta_path.write_text(json.dumps(_meta, indent=2))
+    typer.echo(f"  -> {_meta_path}")
+
     typer.echo("\nParsing complete.  Run 'foodscribe batch-nutrients' next.")
 
 
 @app.command("batch-nutrients")
 def batch_nutrients(
+    input_file: str = typer.Argument(None, help="Specific *_parsed.csv file to process (filename or path). Omit to use --run-id / auto-detect."),
     output_dir: str = typer.Option("output", help="Base output folder (same as used for batch-parse)"),
     run_id: str = typer.Option(None, help="Run subfolder to process (default: latest run_* folder found)"),
     top_k: int = typer.Option(3, help="Retrieval candidates per item"),
@@ -417,37 +445,48 @@ def batch_nutrients(
 
     Reads *_parsed.csv from output/<run_id>/ (auto-detects the latest run folder).
     Writes <name>_summary.csv and <name>_detail.csv to the same run folder.
-    Pass --run-id to target a specific run.
+    Pass a specific file path as the first argument, or use --run-id to target a run folder.
     """
+    import json
     import pandas as pd
+    from datetime import datetime as _dt
     from foodscribe.retrieval.mpnet_retriever import MPNetRetriever
     from foodscribe.nutrients.categories import CategoryLookup
     from foodscribe.nutrients.lookup import NutrientLookup
     from foodscribe.analysis.stats import MealAnalyser, _f, _s
 
-    base_dir = Path(output_dir)
-
-    # Resolve run folder: explicit > latest run_* subfolder > base_dir itself
-    if run_id:
-        in_dir = base_dir / run_id
+    # Resolve parsed files and output folder
+    if input_file:
+        p = Path(input_file)
+        if not p.exists():
+            typer.echo(f"[error] File not found: {input_file}", err=True)
+            raise typer.Exit(1)
+        parsed_files = [p]
+        in_dir = p.parent
+        out_dir = p.parent
+        typer.echo(f"Input file: {p}")
     else:
-        run_dirs = sorted(base_dir.glob("run_*"), reverse=True)
-        in_dir = run_dirs[0] if run_dirs else base_dir
+        base_dir = Path(output_dir)
+        if run_id:
+            in_dir = base_dir / run_id
+        else:
+            run_dirs = sorted(base_dir.glob("run_*"), reverse=True)
+            in_dir = run_dirs[0] if run_dirs else base_dir
+        out_dir = in_dir
+        typer.echo(f"Run folder: {in_dir}")
 
-    out_dir = in_dir
-    typer.echo(f"Run folder: {in_dir}")
+        if not in_dir.exists():
+            typer.echo(f"[error] Input folder not found: {in_dir}", err=True)
+            raise typer.Exit(1)
 
-    if not in_dir.exists():
-        typer.echo(f"[error] Input folder not found: {in_dir}", err=True)
-        raise typer.Exit(1)
-
-    parsed_files = sorted(in_dir.glob("*_parsed.csv"))
-    if not parsed_files:
-        typer.echo(f"[error] No *_parsed.csv files found in {in_dir}", err=True)
-        raise typer.Exit(1)
+        parsed_files = sorted(in_dir.glob("*_parsed.csv"))
+        if not parsed_files:
+            typer.echo(f"[error] No *_parsed.csv files found in {in_dir}", err=True)
+            raise typer.Exit(1)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     ddir = Path(data_dir) if data_dir else DATA_DIR
+    _nutrients_start = _dt.now()
 
     typer.echo("Loading retrieval index…")
     retriever = MPNetRetriever(data_dir=ddir, top_k=top_k)
@@ -455,6 +494,8 @@ def batch_nutrients(
     nut_lookup = NutrientLookup(data_dir=ddir, category_lookup=cat_lookup)
     analyser = MealAnalyser()
     typer.echo(f"Processing {len(parsed_files)} file(s) from {in_dir}/ → {out_dir}/\n")
+
+    _nutrients_file_stats: list[dict] = []
 
     for parsed_path in parsed_files:
         df = pd.read_csv(parsed_path)
@@ -479,9 +520,7 @@ def batch_nutrients(
             grams_list  = grp["grams"].tolist()
             conf_list   = grp["confidence"].tolist()
 
-            batch_results = retriever.retrieve_batch(
-                ingredients, top_k=top_k, contexts=[meal_text] * len(ingredients)
-            )
+            batch_results = retriever.retrieve_batch(ingredients, top_k=top_k)
             rows = []
             for ingredient, grams, conf, cands in zip(ingredients, grams_list, conf_list, batch_results):
                 if not cands:
@@ -540,11 +579,129 @@ def batch_nutrients(
             pd.DataFrame(summary_records).to_csv(p, index=False)
             typer.echo(f"  -> {p}")
         if detail_records:
+            detail_df = pd.DataFrame(detail_records)
             p = out_dir / f"{stem}_detail.csv"
-            pd.DataFrame(detail_records).to_csv(p, index=False)
+            detail_df.to_csv(p, index=False)
             typer.echo(f"  -> {p}")
 
+            # food_items.csv — rows=meals, columns=USDA food items, values=grams consumed
+            # Only include fully-populated extra columns in pivot index;
+            # any NaN in an index column causes groupby to silently drop those rows.
+            pivot_extra_cols = [c for c in extra_cols if detail_df[c].notna().all()]
+            row_index_cols = ["row"] + pivot_extra_cols + ["meal"]
+            _food_items_pivot = (
+                detail_df
+                .groupby(row_index_cols + ["usda_match"])["grams"]
+                .sum()
+                .unstack(fill_value=0)
+            )
+            _food_items_pivot.columns.name = None
+            _conflicts = set(_food_items_pivot.columns) & set(row_index_cols)
+            if _conflicts:
+                _food_items_pivot = _food_items_pivot.rename(columns={c: f"{c} (food)" for c in _conflicts})
+            food_items_df = _food_items_pivot.reset_index()
+            p = out_dir / f"{stem}_food_items.csv"
+            food_items_df.to_csv(p, index=False)
+            typer.echo(f"  -> {p}")
+
+            # food_groups.csv — rows=meals, columns=food categories, values=grams consumed
+            _food_groups_pivot = (
+                detail_df
+                .groupby(row_index_cols + ["category"])["grams"]
+                .sum()
+                .unstack(fill_value=0)
+            )
+            _food_groups_pivot.columns.name = None
+            _conflicts = set(_food_groups_pivot.columns) & set(row_index_cols)
+            if _conflicts:
+                _food_groups_pivot = _food_groups_pivot.rename(columns={c: f"{c} (group)" for c in _conflicts})
+            food_groups_df = _food_groups_pivot.reset_index()
+            p = out_dir / f"{stem}_food_groups.csv"
+            food_groups_df.to_csv(p, index=False)
+            typer.echo(f"  -> {p}")
+
+        _nutrients_file_stats.append({
+            "file": parsed_path.name,
+            "meals_processed": len(summary_records),
+            "ingredients_matched": len(detail_records),
+        })
+
+    # Write / update run_metadata.json
+    _meta_path = out_dir / "run_metadata.json"
+    _meta: dict = json.loads(_meta_path.read_text()) if _meta_path.exists() else {"run_id": str(in_dir.name)}
+    _meta["batch_nutrients"] = {
+        "started_at":       _nutrients_start.isoformat(timespec="seconds"),
+        "completed_at":     _dt.now().isoformat(timespec="seconds"),
+        "duration_seconds": round((_dt.now() - _nutrients_start).total_seconds(), 1),
+        "top_k":            top_k,
+        "files":            _nutrients_file_stats,
+    }
+    _meta_path.write_text(json.dumps(_meta, indent=2))
+    typer.echo(f"  -> {_meta_path}")
+
     typer.echo("\nNutrient retrieval complete.")
+
+
+@app.command()
+def aggregate(
+    input_file: str = typer.Argument(..., help="CSV file to aggregate (e.g. *_summary.csv, *_food_items.csv)"),
+    by: str = typer.Argument(..., help="Comma-separated columns to group by, e.g. 'Subject_ID,Date'"),
+    output_file: str = typer.Option(None, help="Output path (default: auto-named next to input file)"),
+    no_meal: bool = typer.Option(False, "--no-meal", help="Drop the 'meal' column before aggregating (useful for meal-level → day-level rollup)"),
+) -> None:
+    """Aggregate any FoodScribe output CSV by grouping columns of interest.
+
+    Examples:
+
+      # Daily intake per subject from a summary file
+      foodscribe aggregate results_summary.csv "Subject_ID,Date"
+
+      # Daily food-item grams from a food_items pivot
+      foodscribe aggregate results_food_items.csv "Subject_ID,Date"
+    """
+    import pandas as pd
+
+    in_path = Path(input_file)
+    if not in_path.exists():
+        typer.echo(f"[error] File not found: {in_path}", err=True)
+        raise typer.Exit(1)
+
+    group_cols = [c.strip() for c in by.split(",") if c.strip()]
+    if not group_cols:
+        typer.echo("[error] --by must contain at least one column name", err=True)
+        raise typer.Exit(1)
+
+    df = pd.read_csv(in_path)
+
+    missing = [c for c in group_cols if c not in df.columns]
+    if missing:
+        typer.echo(f"[error] Column(s) not found in file: {missing}", err=True)
+        typer.echo(f"Available columns: {list(df.columns)}", err=True)
+        raise typer.Exit(1)
+
+    if no_meal and "meal" in df.columns:
+        df = df.drop(columns=["meal"])
+
+    # Sum all numeric columns; drop non-numeric, non-group columns
+    numeric_cols = [c for c in df.select_dtypes("number").columns if c not in group_cols]
+    agg_df = (
+        df[group_cols + numeric_cols]
+        .groupby(group_cols, sort=False)
+        .sum()
+        .reset_index()
+    )
+
+    # Build output path
+    if output_file:
+        out_path = Path(output_file)
+    else:
+        suffix = "_by_" + "_".join(c.replace(" ", "_") for c in group_cols)
+        out_path = in_path.with_stem(in_path.stem + suffix)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    agg_df.to_csv(out_path, index=False)
+    typer.echo(f"Aggregated {len(df)} rows → {len(agg_df)} groups")
+    typer.echo(f"  -> {out_path}")
 
 
 @app.command()

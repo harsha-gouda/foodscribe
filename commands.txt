@@ -201,34 +201,44 @@ parsed file at any time (e.g. after editing ingredient names or gram weights).
     row, meal, ingredient, grams, confidence
     (all other columns are carried through automatically)
 
-  Output per *_parsed.csv — both files include all extra columns from the
+  Output per *_parsed.csv — all files include all extra columns from the
   original input (Record_ID, Date, Patient, etc.):
 
   <name>_summary.csv — one row per meal, columns:
     row
     <extra columns from input, e.g. Record_ID, Date, Patient>
     meal
-    energy_kcal      — total meal energy
-    protein_g        — total protein
-    carb_g           — total carbohydrate
-    fat_g            — total fat
-    fiber_g          — total dietary fiber
+    ingredients      — semicolon-separated ingredient list
+    avg_confidence   — average LLM confidence across items
     item_count       — number of ingredients with USDA matches
+    dominant_category — USDA category contributing most energy
+    <all nutrient columns summed across ingredients>
 
   <name>_detail.csv — one row per ingredient, columns:
     row
     <extra columns from input, e.g. Record_ID, Date, Patient>
     meal
-    ingredient       — USDA matched food description
+    ingredient       — original parsed ingredient name
+    fdc_id           — USDA FoodData Central ID
+    usda_match       — USDA matched food description
     grams            — gram weight used for scaling
-    energy_kcal      — scaled energy for this ingredient
-    protein_g        — scaled protein
-    carb_g           — scaled carbohydrate
-    fat_g            — scaled fat
-    fiber_g          — scaled fiber
     category         — USDA food category
     subcategory      — USDA food subcategory
+    data_type        — USDA data type (Foundation, SR Legacy, etc.)
     confidence       — LLM confidence score (1-5)
+    <all nutrient columns scaled to gram weight>
+
+  <name>_food_items.csv — pivot table: rows=meals, columns=USDA food items
+    row
+    <extra columns from input, e.g. Record_ID, Date, Patient>
+    meal
+    <one column per unique USDA food match>  — grams consumed (0 if absent)
+
+  <name>_food_groups.csv — pivot table: rows=meals, columns=food categories
+    row
+    <extra columns from input, e.g. Record_ID, Date, Patient>
+    meal
+    <one column per USDA food category>  — total grams consumed (0 if absent)
 
   Notes:
     - USDA nutrient values are per 100g; scaled by grams/100 automatically.
@@ -236,6 +246,8 @@ parsed file at any time (e.g. after editing ingredient names or gram weights).
     - --top-k controls how many USDA candidates are retrieved per ingredient;
       the best cosine-similarity match is always used regardless of top-k.
     - Re-run after editing *_parsed.csv to correct misidentified ingredients.
+    - Food/group column names that conflict with input column names are
+      automatically renamed (e.g. "Date" fruit → "Date (food)").
 
   Examples:
     foodscribe batch-nutrients                              # auto-detects latest run
@@ -244,8 +256,10 @@ parsed file at any time (e.g. after editing ingredient names or gram weights).
 
   Downstream analysis with pandas:
     import pandas as pd
-    summary = pd.read_csv("output/meals_summary.csv")
-    detail  = pd.read_csv("output/meals_detail.csv")
+    summary    = pd.read_csv("output/run_xyz/meals_summary.csv")
+    detail     = pd.read_csv("output/run_xyz/meals_detail.csv")
+    food_items = pd.read_csv("output/run_xyz/meals_food_items.csv")
+    food_groups = pd.read_csv("output/run_xyz/meals_food_groups.csv")
 
     # Total calories per patient
     summary.groupby("Patient")["energy_kcal"].mean()
@@ -261,6 +275,48 @@ parsed file at any time (e.g. after editing ingredient names or gram weights).
 
     # Macro distribution across all meals
     summary[["protein_g", "carb_g", "fat_g"]].describe()
+
+--------------------------------------------------------------------------------
+aggregate
+--------------------------------------------------------------------------------
+Aggregate any FoodScribe output CSV by grouping columns of interest.
+Sums all numeric columns within each group — useful for rolling up meal-level
+data to daily or per-subject totals.
+
+  foodscribe aggregate INPUT_FILE BY [OPTIONS]
+
+  Arguments:
+    INPUT_FILE         Path to any FoodScribe output CSV
+                       (e.g. *_summary.csv, *_food_items.csv, *_food_groups.csv)
+    BY                 Comma-separated column names to group by
+                       (e.g. "Subject_ID,Date" or "Patient")
+
+  Options:
+    --output-file PATH  Output path  (default: auto-named next to input file)
+    --no-meal           Drop the 'meal' column before aggregating
+                        (cleaner for meal-level → day-level rollups)
+
+  Output:
+    One row per unique combination of the BY columns.
+    All numeric columns are summed within each group.
+    Non-numeric, non-group columns are dropped.
+    Default output name: <stem>_by_<col1>_<col2>.csv
+
+  Examples:
+    # Daily nutrient totals per subject
+    foodscribe aggregate output/run_xyz/CCFA_summary.csv "Subject_ID,Date" --no-meal
+
+    # Daily food-item grams per subject
+    foodscribe aggregate output/run_xyz/CCFA_food_items.csv "Subject_ID,Date" --no-meal
+
+    # Daily food-group grams per subject
+    foodscribe aggregate output/run_xyz/CCFA_food_groups.csv "Subject_ID,Date" --no-meal
+
+    # Per-subject totals across all days
+    foodscribe aggregate output/run_xyz/CCFA_summary.csv "Subject_ID" --no-meal
+
+    # Custom output path
+    foodscribe aggregate meals_summary.csv "Subject_ID,Date" --output-file results/daily.csv
 
 ================================================================================
 PYTHON API — foodscribe.analysis.stats
@@ -366,9 +422,17 @@ TYPICAL WORKFLOWS
   #     meals_parsed.csv
   #     meals_summary.csv
   #     meals_detail.csv
+  #     meals_food_items.csv
+  #     meals_food_groups.csv
   #   run_20241205_090000/
   #     meals_parsed.csv
   #     ...
+
+--- Aggregate to daily totals per subject ---
+  # After batch-nutrients, roll up meal-level nutrients to one row per subject/day
+  foodscribe aggregate output/run_20241201_143022/meals_summary.csv "Subject_ID,Date" --no-meal
+  foodscribe aggregate output/run_20241201_143022/meals_food_items.csv "Subject_ID,Date" --no-meal
+  foodscribe aggregate output/run_20241201_143022/meals_food_groups.csv "Subject_ID,Date" --no-meal
 
 --- Switch provider mid-project ---
   foodscribe use-provider openai
