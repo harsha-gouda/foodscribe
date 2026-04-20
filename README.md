@@ -90,18 +90,22 @@ foodscribe parse "2 scrambled eggs with toast and orange juice"
 ```
 
 ```
-Meal Nutrient Profile
+Identified: scrambled eggs (100g) · bread, toasted (28g) · orange juice (248g)
+
+                                           Meal Nutrient Profile                                           
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┓
 ┃ Food (USDA match)                     ┃ Grams ┃ Energy(kcal) ┃ Protein(g) ┃ Carb(g) ┃ Fat(g) ┃ Fiber(g) ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━┩
-│ Egg, whole, cooked, scrambled         │   100 │          149 │       10.0 │     1.6 │   11.0 │      0.0 │
-│ Bread, white, toasted                 │    56 │          164 │        5.8 │    30.3 │    2.2 │      1.4 │
-│ Orange juice, 100%, freshly squeezed  │   240 │          113 │        1.9 │    24.0 │    0.9 │      0.7 │
+│ Eggs, scrambled, frozen mixture       │   100 │          131 │       13.1 │     7.5 │    5.6 │      0.0 │
+│ Bread, wheat, toasted                 │    28 │           88 │        3.6 │    15.6 │    1.2 │      1.3 │
+│ Orange juice, 100%,  freshly squeezed │   248 │          117 │        2.0 │    24.8 │    0.9 │      0.7 │
 ├───────────────────────────────────────┼───────┼──────────────┼────────────┼─────────┼────────┼──────────┤
-│ TOTAL                                 │       │          426 │       17.8 │    55.9 │   14.1 │      2.1 │
+│ TOTAL                                 │       │          335 │       18.7 │    47.9 │    7.7 │      2.1 │
 └───────────────────────────────────────┴───────┴──────────────┴────────────┴─────────┴────────┴──────────┘
 
-Macronutrient split:  Protein 17%  |  Carbs 53%  |  Fat 30%
+Macronutrient split:  Protein 22%  |  Carbs 57%  |  Fat 21%
+Categories present:   Baked Products·Dairy and Egg Products
+Dominant category:    Dairy and Egg Products  (131 kcal, 39% of meal energy)
 ```
 
 With full micronutrient panel:
