@@ -29,6 +29,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -173,8 +176,18 @@ def build_foods_wide(usda_dir: Path, data_dir: Path, fdc_ids: set[int]) -> pd.Da
     # Drop rows with null nutrient_name or amount
     long_df.dropna(subset=["nutrient_name", "amount"], inplace=True)
 
-    # Build column name = "Nutrient name (unit)" to distinguish kcal vs kJ etc.
+    # Normalise energy nutrient names.
+    # Foundation data uses variants like "Energy (Atwater General Factors)" and
+    # "Energy (Atwater Specific Factors)" — these must collapse to "Energy" so
+    # the resulting column is always "Energy (kcal)", matching the lookup table.
+    energy_mask = long_df["nutrient_name"].str.contains("Energy", case=False, na=False)
+    long_df.loc[energy_mask, "nutrient_name"] = "Energy"
+
+    # Build column name = "Nutrient name (unit)"
     long_df["col"] = long_df["nutrient_name"] + " (" + long_df["unit_name"].fillna("") + ")"
+
+    # Drop kJ energy rows — redundant with kcal and pollutes the nutrient output.
+    long_df = long_df[long_df["col"] != "Energy (kJ)"]
 
     # Deduplicate: for each (fdc_id, col) keep the first row
     # (files were concatenated in priority order so first = best source)
@@ -237,6 +250,54 @@ def build_embeddings(meta: pd.DataFrame, data_dir: Path, batch_size: int = 256) 
 
 
 # ---------------------------------------------------------------------------
+# Step D (alt) — food_embeddings_openai.npy
+# ---------------------------------------------------------------------------
+
+def build_embeddings_openai(meta: pd.DataFrame, data_dir: Path, batch_size: int = 512) -> None:
+    """
+    Encode food descriptions with OpenAI text-embedding-3-large (3072-dim) and
+    save L2-normalised float32 embeddings as food_embeddings_openai.npy.
+    Row order matches food_metadata.csv row order.
+    Requires OPENAI_API_KEY in the environment.
+    """
+    import os
+    log.info("Step D — building food_embeddings_openai.npy (text-embedding-3-large) ...")
+    try:
+        from openai import OpenAI
+    except ImportError:
+        log.error("openai package not installed. Run: pip install openai")
+        sys.exit(1)
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        log.error("OPENAI_API_KEY environment variable not set")
+        sys.exit(1)
+
+    client = OpenAI(api_key=api_key)
+    descriptions = meta["description"].fillna("").tolist()
+    n = len(descriptions)
+    dim = 3072  # text-embedding-3-large output dimension
+    log.info("  embedding %d descriptions in batches of %d ...", n, batch_size)
+
+    embeddings = np.zeros((n, dim), dtype=np.float32)
+    for i in range(0, n, batch_size):
+        batch = descriptions[i : i + batch_size]
+        response = client.embeddings.create(model="text-embedding-3-large", input=batch)
+        for j, emb_obj in enumerate(response.data):
+            embeddings[i + j] = emb_obj.embedding
+        log.info("  %d / %d done", min(i + batch_size, n), n)
+
+    # L2-normalise
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    embeddings = (embeddings / norms).astype(np.float32)
+
+    out_path = data_dir / "food_embeddings_openai.npy"
+    np.save(out_path, embeddings)
+    log.info("  wrote %s  shape=%s  dtype=%s", out_path, embeddings.shape, embeddings.dtype)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -257,13 +318,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--skip-embeddings",
         action="store_true",
-        help="Skip the sentence-transformer embedding step (steps A–C only)",
+        help="Skip the embedding step (steps A-C only)",
+    )
+    p.add_argument(
+        "--embedder",
+        choices=["mpnet", "openai"],
+        default="mpnet",
+        help="Embedding model to use: mpnet (local, default) or openai (text-embedding-3-large)",
     )
     p.add_argument(
         "--batch-size",
         type=int,
         default=256,
-        help="Batch size for sentence-transformer encoding (default: 256)",
+        help="Batch size for encoding (default: 256 for mpnet, 512 recommended for openai)",
     )
     return p.parse_args()
 
@@ -292,6 +359,8 @@ def main() -> None:
     # D — embeddings (optional)
     if args.skip_embeddings:
         log.info("Step D — skipped (--skip-embeddings)")
+    elif args.embedder == "openai":
+        build_embeddings_openai(meta, data_dir, batch_size=args.batch_size or 512)
     else:
         build_embeddings(meta, data_dir, batch_size=args.batch_size)
 

@@ -51,15 +51,30 @@ def use_provider(
     typer.echo(f"Default provider set to: {p}  (saved to {_ENV_FILE})")
 
 
-def _make_pipeline(provider: str | None, model: str | None, top_k: int, data_dir: Path):
-    from foodscribe.llm.client import LLMClient
+def _make_retriever(data_dir: Path, top_k: int, foundation_threshold: float = 0.70):
+    """Return OpenAIRetriever if the OpenAI index exists, else MPNetRetriever."""
+    openai_index = data_dir / "food_embeddings_openai.npy"
+    if openai_index.exists():
+        from foodscribe.retrieval.openai_retriever import OpenAIRetriever
+        return OpenAIRetriever(data_dir=data_dir, top_k=top_k, foundation_threshold=foundation_threshold)
     from foodscribe.retrieval.mpnet_retriever import MPNetRetriever
+    return MPNetRetriever(data_dir=data_dir, top_k=top_k, foundation_threshold=foundation_threshold)
+
+
+def _make_pipeline(
+    provider: str | None,
+    model: str | None,
+    top_k: int,
+    data_dir: Path,
+    foundation_threshold: float = 0.70,
+):
+    from foodscribe.llm.client import LLMClient
     from foodscribe.nutrients.categories import CategoryLookup
     from foodscribe.nutrients.lookup import NutrientLookup
     from foodscribe.analysis.stats import MealAnalyser
 
     llm = LLMClient(provider=provider, model=model)
-    retriever = MPNetRetriever(data_dir=data_dir, top_k=top_k)
+    retriever = _make_retriever(data_dir, top_k, foundation_threshold)
     cat_lookup = CategoryLookup(data_dir=data_dir)
     nut_lookup = NutrientLookup(data_dir=data_dir, category_lookup=cat_lookup)
     analyser = MealAnalyser()
@@ -78,11 +93,14 @@ def parse(
     save_plots: str = typer.Option(None, help="Save plots as PNG to this directory"),
     show_category: bool = typer.Option(False, "--show-category", help="Add Category/Subcategory columns"),
     all_nutrients: bool = typer.Option(False, "--all-nutrients", help="Show full micronutrient panel for the meal"),
+    foundation_threshold: float = typer.Option(0.70, "--foundation-threshold",
+        help="Min cosine score to prefer a Foundation food (0=off, 1=Foundation-only)"),
     data_dir: str = typer.Option(None, envvar="FOODSCRIBE_DATA_DIR", help="Data directory path"),
 ) -> None:
     """Parse a meal description and return USDA nutrient profile."""
     ddir = Path(data_dir) if data_dir else DATA_DIR
-    llm, retriever, nut_lookup, analyser = _make_pipeline(provider, model, top_k, ddir)
+    llm, retriever, nut_lookup, analyser = _make_pipeline(provider, model, top_k, ddir,
+                                                           foundation_threshold=foundation_threshold)
 
     typer.echo(f"Provider: {llm.provider} ({llm.model})")
 
@@ -137,6 +155,14 @@ def parse(
         raise typer.Exit(1)
 
     # Stage 4: summarise + display
+    ingredient_parts = []
+    for item in items:
+        part = item.item
+        if item.grams:
+            part += f" ({item.grams:.0f}g)"
+        ingredient_parts.append(part)
+    typer.echo(f"Identified: {' · '.join(ingredient_parts)}\n")
+
     summary = analyser.summarise(rows)
     analyser.print_table(rows, summary, show_category=show_category, show_all_nutrients=all_nutrients)
 
@@ -332,7 +358,7 @@ def batch_parse(
     typer.echo(f"Run ID   : {_run_id}  (pass --run-id {_run_id} to resume)")
     batch_size = limit if limit > 0 else None
     source_desc = csv_files[0] if input_file else f"{Path(input_dir)}/"
-    typer.echo(f"Parsing {len(csv_files)} file(s) from {source_desc} → {out_dir}/  (limit={batch_size or 'none'})\n")
+    typer.echo(f"Parsing {len(csv_files)} file(s) from {source_desc} -> {out_dir}/  (limit={batch_size or 'none'})\n")
 
     _parse_file_stats: list[dict] = []
 
@@ -439,6 +465,8 @@ def batch_nutrients(
     output_dir: str = typer.Option("output", help="Base output folder (same as used for batch-parse)"),
     run_id: str = typer.Option(None, help="Run subfolder to process (default: latest run_* folder found)"),
     top_k: int = typer.Option(3, help="Retrieval candidates per item"),
+    foundation_threshold: float = typer.Option(0.70, "--foundation-threshold",
+        help="Min cosine score to prefer a Foundation food (0=off, 1=Foundation-only)"),
     data_dir: str = typer.Option(None, envvar="FOODSCRIBE_DATA_DIR"),
 ) -> None:
     """Step 2 — Retrieval only: take *_parsed.csv files and produce nutrient profiles.
@@ -450,7 +478,6 @@ def batch_nutrients(
     import json
     import pandas as pd
     from datetime import datetime as _dt
-    from foodscribe.retrieval.mpnet_retriever import MPNetRetriever
     from foodscribe.nutrients.categories import CategoryLookup
     from foodscribe.nutrients.lookup import NutrientLookup
     from foodscribe.analysis.stats import MealAnalyser, _f, _s
@@ -488,12 +515,12 @@ def batch_nutrients(
     ddir = Path(data_dir) if data_dir else DATA_DIR
     _nutrients_start = _dt.now()
 
-    typer.echo("Loading retrieval index…")
-    retriever = MPNetRetriever(data_dir=ddir, top_k=top_k)
+    typer.echo("Loading retrieval index...")
+    retriever = _make_retriever(ddir, top_k, foundation_threshold)
     cat_lookup = CategoryLookup(data_dir=ddir)
     nut_lookup = NutrientLookup(data_dir=ddir, category_lookup=cat_lookup)
     analyser = MealAnalyser()
-    typer.echo(f"Processing {len(parsed_files)} file(s) from {in_dir}/ → {out_dir}/\n")
+    typer.echo(f"Processing {len(parsed_files)} file(s) from {in_dir}/ -> {out_dir}/\n")
 
     _nutrients_file_stats: list[dict] = []
 
@@ -526,7 +553,7 @@ def batch_nutrients(
                 if not cands:
                     continue
                 grams_val = float(grams) if pd.notna(grams) else None
-                row = nut_lookup.get_scaled(cands[0].fdc_id, grams_val) if grams_val else nut_lookup.get(cands[0].fdc_id)
+                row = nut_lookup.get_scaled(cands[0].fdc_id, grams_val) if grams_val is not None else nut_lookup.get(cands[0].fdc_id)
                 if row:
                     row._confidence = int(conf) if pd.notna(conf) else None
                     row._grams = grams_val
@@ -642,12 +669,109 @@ def batch_nutrients(
     typer.echo("\nNutrient retrieval complete.")
 
 
+@app.command("ingredient-lookup")
+def ingredient_lookup(
+    input_file: str = typer.Argument(..., help="CSV file with an Ingredient column and a grams column"),
+    ingredient_col: str = typer.Option("Ingredient", help="Column name for ingredient text"),
+    grams_col: str = typer.Option("grams", help="Column name for gram weights"),
+    output_file: str = typer.Option(None, help="Output path (default: <stem>_nutrients.csv next to input)"),
+    top_k: int = typer.Option(3, help="Retrieval candidates per ingredient"),
+    foundation_threshold: float = typer.Option(0.70, "--foundation-threshold"),
+    data_dir: str = typer.Option(None, envvar="FOODSCRIBE_DATA_DIR"),
+) -> None:
+    """Direct ingredient-level nutrient lookup — no LLM step.
+
+    Reads a CSV with an ingredient description column and a gram-weight column,
+    runs semantic retrieval on each ingredient, and writes a nutrient profile CSV
+    with one row per ingredient scaled to the given gram weight.
+
+    All extra columns (e.g. ParticipantCode, CompFileID) are carried through.
+
+    Examples:
+
+      foodscribe ingredient-lookup input/food_ingredients_GutPuzzle.csv
+
+      foodscribe ingredient-lookup input/foods.csv --ingredient-col FoodName --grams-col WeightG
+    """
+    import pandas as pd
+    from foodscribe.nutrients.categories import CategoryLookup
+    from foodscribe.nutrients.lookup import NutrientLookup
+    from foodscribe.analysis.stats import _s
+
+    in_path = Path(input_file)
+    if not in_path.exists():
+        typer.echo(f"[error] File not found: {in_path}", err=True)
+        raise typer.Exit(1)
+
+    df = pd.read_csv(in_path)
+    for col in (ingredient_col, grams_col):
+        if col not in df.columns:
+            typer.echo(f"[error] Column '{col}' not found. Available: {list(df.columns)}", err=True)
+            raise typer.Exit(1)
+
+    ddir = Path(data_dir) if data_dir else DATA_DIR
+    typer.echo("Loading retrieval index...")
+    retriever = _make_retriever(ddir, top_k, foundation_threshold)
+    cat_lookup = CategoryLookup(data_dir=ddir)
+    nut_lookup = NutrientLookup(data_dir=ddir, category_lookup=cat_lookup)
+
+    # Extra columns to carry through
+    pipeline_cols = {ingredient_col, grams_col}
+    extra_cols = [c for c in df.columns if c not in pipeline_cols]
+
+    ingredients = df[ingredient_col].tolist()
+    grams_list = df[grams_col].tolist()
+
+    typer.echo(f"Retrieving USDA matches for {len(ingredients)} ingredients...")
+    batch_results = retriever.retrieve_batch(ingredients, top_k=top_k)
+
+    detail_records = []
+    for i, (ingredient, grams, cands) in enumerate(zip(ingredients, grams_list, batch_results)):
+        extra = {c: df.iloc[i][c] for c in extra_cols}
+        if not cands:
+            typer.echo(f"  [no match] {ingredient}")
+            continue
+        best = cands[0]
+        grams_val = float(grams) if pd.notna(grams) else None
+        row = nut_lookup.get_scaled(best.fdc_id, grams_val) if grams_val is not None else nut_lookup.get(best.fdc_id)
+        if not row:
+            typer.echo(f"  [no nutrients] {ingredient} -> {best.description}")
+            continue
+        nutrient_cols = {k: round(v, 4) for k, v in (row.all_nutrients or {}).items()}
+        detail_records.append({
+            **extra,
+            ingredient_col: ingredient,
+            grams_col: grams_val or 100,
+            "fdc_id":      best.fdc_id,
+            "usda_match":  best.description,
+            "match_score": round(best.score, 4),
+            "category":    _s(getattr(row, "category", None)),
+            "subcategory": _s(getattr(row, "subcategory", None)),
+            "data_type":   _s(getattr(row, "data_type", None)),
+            **nutrient_cols,
+        })
+
+    if not detail_records:
+        typer.echo("[error] No nutrients retrieved.", err=True)
+        raise typer.Exit(1)
+
+    out_df = pd.DataFrame(detail_records)
+    if output_file:
+        out_path = Path(output_file)
+    else:
+        out_path = in_path.with_stem(in_path.stem + "_nutrients")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_df.to_csv(out_path, index=False)
+    typer.echo(f"\nMatched {len(detail_records)}/{len(ingredients)} ingredients")
+    typer.echo(f"  -> {out_path}")
+
+
 @app.command()
 def aggregate(
     input_file: str = typer.Argument(..., help="CSV file to aggregate (e.g. *_summary.csv, *_food_items.csv)"),
     by: str = typer.Argument(..., help="Comma-separated columns to group by, e.g. 'Subject_ID,Date'"),
     output_file: str = typer.Option(None, help="Output path (default: auto-named next to input file)"),
-    no_meal: bool = typer.Option(False, "--no-meal", help="Drop the 'meal' column before aggregating (useful for meal-level → day-level rollup)"),
+    no_meal: bool = typer.Option(False, "--no-meal", help="Drop the 'meal' column before aggregating (useful for meal-level -> day-level rollup)"),
 ) -> None:
     """Aggregate any FoodScribe output CSV by grouping columns of interest.
 
@@ -700,7 +824,7 @@ def aggregate(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     agg_df.to_csv(out_path, index=False)
-    typer.echo(f"Aggregated {len(df)} rows → {len(agg_df)} groups")
+    typer.echo(f"Aggregated {len(df)} rows -> {len(agg_df)} groups")
     typer.echo(f"  -> {out_path}")
 
 
@@ -739,7 +863,7 @@ def batch(
     ddir = Path(data_dir) if data_dir else DATA_DIR
     llm, retriever, nut_lookup, analyser = _make_pipeline(provider, model, top_k, ddir)
     typer.echo(f"Provider: {llm.provider} ({llm.model})")
-    typer.echo(f"Processing {len(csv_files)} file(s) from {in_dir}/ → {out_dir}/\n")
+    typer.echo(f"Processing {len(csv_files)} file(s) from {in_dir}/ -> {out_dir}/\n")
 
     def _run_meal(text: str):
         items = llm.parse_meal(text)
