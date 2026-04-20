@@ -34,7 +34,7 @@ Download the four pre-built data files and place them in the `data/` folder:
 | `food_metadata.csv` | Food descriptions and categories |
 | `food_categories.csv` | Category/subcategory per food |
 | `foods_wide.csv` | All nutrients per food (wide format) |
-| `food_embeddings_mpnet.npy` | 768-dim MPNet embeddings for semantic search |
+| `food_embeddings_openai.npy` | 3072-dim OpenAI `text-embedding-3-large` embeddings for semantic search |
 
 > **Download:** [10.5281/zenodo.18990542](https://doi.org/10.5281/zenodo.18990542)
 
@@ -43,15 +43,15 @@ Download the four pre-built data files and place them in the `data/` folder:
 data/
 ```
 
-### Optional: OpenAI embedding index (higher accuracy)
+### Rebuilding the embedding index
 
-For better semantic matching accuracy, build a `text-embedding-3-large` index (3072-dim). Requires an OpenAI API key and the raw USDA source data:
+To rebuild the index from raw USDA source data (requires an OpenAI API key):
 
 ```bash
 python scripts/build_data.py --usda-dir ../USDA_data/ --embedder openai
 ```
 
-This writes `data/food_embeddings_openai.npy`. When present, FoodScribe automatically uses it instead of the MPNet index.
+This writes `data/food_embeddings_openai.npy`. FoodScribe falls back to the MPNet index (`food_embeddings_mpnet.npy`) only if the OpenAI index is not present.
 
 ---
 
