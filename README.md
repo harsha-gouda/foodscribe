@@ -5,19 +5,8 @@ LLM-powered food diary parser with USDA nutrient lookup.
 FoodScribe turns free-text meal descriptions into structured nutrient profiles grounded in the USDA FoodData Central database. It uses a four-stage pipeline:
 
 1. **LLM parsing** — breaks a meal description into individual ingredients with estimated quantities and NDB numbers
-2. **Two-stage food matching** — first tries to resolve ingredients via LLM-suggested NDB numbers against a prebuilt USDA lookup table; falls back to semantic retrieval using OpenAI `text-embedding-3-large` embeddings (3072-dim) for any unresolved items
+2. **Two-stage food matching** — resolves ingredients via  semantic retrieval using OpenAI `text-embedding-3-large` embeddings (3072-dim) for each individual nutrients
 3. **Nutrient lookup** — pulls exact USDA nutrient values (macros + micros) for the matched food, scaled to gram weight
-4. **Stats & visualisation** — aggregates nutrients per meal, per day, or across a batch
-
-### Two-stage food matching
-
-The retrieval step uses a hybrid approach to maximise both speed and accuracy:
-
-- **Stage 1 — NDB lookup**: The LLM suggests an NDB number for each ingredient. FoodScribe validates it against a prebuilt `ndb_to_fdc.csv` table (8,158 entries compiled from USDA Foundation, SR Legacy, and Survey FNDDS sources). When the NDB number is valid, the food is resolved instantly without any API call.
-- **Stage 2 — Semantic fallback**: If the LLM's NDB number is missing, hallucinated, or not found in the table, FoodScribe embeds the ingredient name using OpenAI `text-embedding-3-large` and performs cosine similarity search against the full USDA index (~18,000 foods including NHANES). Foundation foods are preferred when a strong match exists.
-
-Text normalisation (lowercase, remove parentheses and `%`) is applied identically at index build time and query time to ensure embedding space consistency.
-
 ---
 
 ## Installation
