@@ -8,6 +8,7 @@ FoodScribe turns free-text meal descriptions into structured nutrient profiles g
 2. **Two-stage food matching** — resolves ingredients via  semantic retrieval using OpenAI `text-embedding-3-large` embeddings (3072-dim) for each individual nutrients
 3. **Nutrient lookup** — pulls exact USDA nutrient values (macros + micros) for the matched food, scaled to gram weight
 ---
+<img width="2000" height="857" alt="image" src="https://github.com/user-attachments/assets/c56490cc-cc8d-40eb-9ede-9a6a8cc9cc57" />
 
 ## Installation
 
