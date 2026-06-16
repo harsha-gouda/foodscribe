@@ -1,5 +1,6 @@
 """
-One-off script to build all data/ files required by FoodScribe from raw USDA long-format CSVs.
+One-off script to build all data/ files required by FoodScribe from raw USDA long-format CSVs
+and optionally NHANES dietary intake data.
 
 Input files (--usda-dir):
     foundation_long.csv   — USDA Foundation foods, long format
@@ -10,6 +11,11 @@ Input files (--usda-dir):
         fdc_id, data_type, ndb_number, description, food_category,
         nutrient_name, amount, unit_name, ...
 
+Optional input (--nhanes-dir):
+    DR1IFF_J_with_descriptions.csv  — NHANES 2021-2023 dietary intake records
+    Unique foods not already in USDA are extracted, nutrients normalised to
+    per-100g, and appended to all output tables.
+
 Output files (--data-dir):
     food_metadata.csv          fdc_id, description, food_category, data_type
     food_categories.csv        fdc_id, description, category, subcategory, data_type
@@ -18,6 +24,8 @@ Output files (--data-dir):
 
 Usage:
     python scripts/build_data.py --usda-dir ../USDA_data/ --data-dir data/
+    python scripts/build_data.py --usda-dir ../USDA_data/ --nhanes-dir ../USDA_data/NHANES/ --data-dir data/
+    python scripts/build_data.py --usda-dir ../USDA_data/ --nhanes-dir ../USDA_data/NHANES/ --embedder openai
     python scripts/build_data.py --usda-dir ../USDA_data/ --data-dir data/ --skip-embeddings
 """
 from __future__ import annotations
@@ -217,6 +225,19 @@ def build_foods_wide(usda_dir: Path, data_dir: Path, fdc_ids: set[int]) -> pd.Da
 # Step D — food_embeddings_mpnet.npy
 # ---------------------------------------------------------------------------
 
+def _normalise_text(text: str) -> str:
+    """Harmonise food description text before embedding.
+
+    Must stay identical to the same function in foodscribe/retrieval/openai_retriever.py.
+    Removes parentheses, percent signs, and lowercases everything.
+    """
+    import re
+    text = text.lower()
+    text = re.sub(r"[()%]", "", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
 def build_embeddings(meta: pd.DataFrame, data_dir: Path, batch_size: int = 256) -> None:
     """
     Encode food descriptions with all-mpnet-base-v2 and save L2-normalised
@@ -230,7 +251,7 @@ def build_embeddings(meta: pd.DataFrame, data_dir: Path, batch_size: int = 256) 
         log.error("sentence-transformers not installed. Run: pip install sentence-transformers")
         sys.exit(1)
 
-    descriptions = meta["description"].fillna("").tolist()
+    descriptions = [_normalise_text(d) for d in meta["description"].fillna("").tolist()]
     n = len(descriptions)
     log.info("  encoding %d descriptions with all-mpnet-base-v2 ...", n)
 
@@ -274,7 +295,7 @@ def build_embeddings_openai(meta: pd.DataFrame, data_dir: Path, batch_size: int 
         sys.exit(1)
 
     client = OpenAI(api_key=api_key)
-    descriptions = meta["description"].fillna("").tolist()
+    descriptions = [_normalise_text(d) for d in meta["description"].fillna("").tolist()]
     n = len(descriptions)
     dim = 3072  # text-embedding-3-large output dimension
     log.info("  embedding %d descriptions in batches of %d ...", n, batch_size)
@@ -295,6 +316,211 @@ def build_embeddings_openai(meta: pd.DataFrame, data_dir: Path, batch_size: int 
     out_path = data_dir / "food_embeddings_openai.npy"
     np.save(out_path, embeddings)
     log.info("  wrote %s  shape=%s  dtype=%s", out_path, embeddings.shape, embeddings.dtype)
+
+
+# ---------------------------------------------------------------------------
+# Step E — NHANES integration
+# ---------------------------------------------------------------------------
+
+# Maps NHANES DR1I* column names → standard nutrient names used in foods_wide.csv
+_NHANES_NUTRIENT_MAP: dict[str, str] = {
+    "DR1IKCAL": "Energy (kcal)",
+    "DR1IPROT": "Protein (g)",
+    "DR1ICARB": "Carbohydrate, by difference (g)",
+    "DR1ISUGR": "Sugars, Total (g)",
+    "DR1IFIBE": "Fiber, total dietary (g)",
+    "DR1ITFAT": "Total lipid (fat) (g)",
+    "DR1ISFAT": "Fatty acids, total saturated (g)",
+    "DR1IMFAT": "Fatty acids, total monounsaturated (g)",
+    "DR1IPFAT": "Fatty acids, total polyunsaturated (g)",
+    "DR1ICHOL": "Cholesterol (mg)",
+    "DR1ICALC": "Calcium, Ca (mg)",
+    "DR1IPHOS": "Phosphorus, P (mg)",
+    "DR1IMAGN": "Magnesium, Mg (mg)",
+    "DR1IIRON": "Iron, Fe (mg)",
+    "DR1IZINC": "Zinc, Zn (mg)",
+    "DR1ICOPP": "Copper, Cu (mg)",
+    "DR1ISODI": "Sodium, Na (mg)",
+    "DR1IPOTA": "Potassium, K (mg)",
+    "DR1ISELE": "Selenium, Se (µg)",
+    "DR1IVC":   "Vitamin C, total ascorbic acid (mg)",
+    "DR1IVB1":  "Thiamin (mg)",
+    "DR1IVB2":  "Riboflavin (mg)",
+    "DR1INIAC": "Niacin (mg)",
+    "DR1IVB6":  "Vitamin B-6 (mg)",
+    "DR1IVB12": "Vitamin B-12 (µg)",
+    "DR1IVD":   "Vitamin D (D2 + D3) (µg)",
+    "DR1IVK":   "Vitamin K (phylloquinone) (µg)",
+    "DR1IATOC": "Vitamin E (alpha-tocopherol) (mg)",
+    "DR1IRET":  "Retinol (µg)",
+    "DR1IVARA": "Vitamin A, RAE (µg)",
+    "DR1IBCAR": "Carotene, beta (µg)",
+    "DR1IACAR": "Carotene, alpha (µg)",
+    "DR1ICRYP": "Cryptoxanthin, beta (µg)",
+    "DR1ILYCO": "Lycopene (µg)",
+    "DR1ILZ":   "Lutein + zeaxanthin (µg)",
+    "DR1IFOLA": "Folate, total (µg)",
+    "DR1IFA":   "Folic acid (µg)",
+    "DR1IFDFE": "Folate, DFE (µg)",
+    "DR1ICHL":  "Choline, total (mg)",
+    "DR1ICAFF": "Caffeine (mg)",
+    "DR1ITHEO": "Theobromine (mg)",
+    "DR1IALCO": "Alcohol, ethyl (g)",
+    "DR1IMOIS": "Water (g)",
+}
+
+# Anomalous sentinel value used in NHANES for missing data
+_NHANES_SENTINEL = 5.397605346934028e-79
+
+# FNDDS food code prefix (first 2 digits) → USDA food category
+_FNDDS_PREFIX_TO_CATEGORY: dict[str, str] = {
+    "11": "Dairy and Egg Products",
+    "12": "Dairy and Egg Products",
+    "13": "Dairy and Egg Products",
+    "14": "Dairy and Egg Products",
+    "21": "Beef Products",
+    "22": "Pork Products",
+    "23": "Lamb, Veal, and Game Products",
+    "24": "Poultry Products",
+    "25": "Sausages and Luncheon Meats",
+    "26": "Finfish and Shellfish Products",
+    "27": "Meals, Entrees, and Side Dishes",
+    "28": "Meals, Entrees, and Side Dishes",
+    "29": "Meals, Entrees, and Side Dishes",
+    "31": "Legumes and Legume Products",
+    "32": "Dairy and Egg Products",
+    "33": "Dairy and Egg Products",
+    "41": "Legumes and Legume Products",
+    "42": "Nuts and Seed Products",
+    "43": "Nuts and Seed Products",
+    "51": "Baked Products",
+    "52": "Baked Products",
+    "53": "Baked Products",
+    "54": "Snacks",
+    "55": "Baked Products",
+    "56": "Cereal Grains and Pasta",
+    "57": "Breakfast Cereals",
+    "58": "Fast Foods",
+    "61": "Fruits and Fruit Juices",
+    "62": "Fruits and Fruit Juices",
+    "63": "Fruits and Fruit Juices",
+    "64": "Fruits and Fruit Juices",
+    "67": "Baby Foods",
+    "71": "Vegetables and Vegetable Products",
+    "72": "Vegetables and Vegetable Products",
+    "73": "Vegetables and Vegetable Products",
+    "74": "Vegetables and Vegetable Products",
+    "75": "Vegetables and Vegetable Products",
+    "76": "Baby Foods",
+    "77": "Meals, Entrees, and Side Dishes",
+    "78": "Beverages",
+    "81": "Fats and Oils",
+    "82": "Fats and Oils",
+    "83": "Fats and Oils",
+    "89": "Spices and Herbs",
+    "91": "Sweets",
+    "92": "Beverages",
+    "93": "Beverages",
+    "94": "Beverages",
+    "95": "Beverages",
+}
+
+
+def build_nhanes(nhanes_dir: Path, existing_fdc_ids: set[int]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Parse NHANES DR1IFF_J_with_descriptions.csv and return two DataFrames
+    compatible with food_metadata.csv and foods_wide.csv schemas.
+
+    Only foods whose DR1IFDCD code is NOT already in existing_fdc_ids are returned
+    (USDA data takes priority for overlapping food codes).
+
+    Nutrients are normalised from per-serving to per-100g by dividing each
+    nutrient value by DR1IGRMS and multiplying by 100, then averaged across
+    all intake records for the same food code.
+
+    Returns:
+        nhanes_meta  — columns: fdc_id, description, food_category, data_type
+        nhanes_wide  — columns: fdc_id + mapped nutrient columns
+    """
+    log.info("Step E — integrating NHANES data ...")
+
+    nhanes_file = nhanes_dir / "DR1IFF_J_with_descriptions.csv"
+    if not nhanes_file.exists():
+        log.warning("  DR1IFF_J_with_descriptions.csv not found in %s — skipping NHANES", nhanes_dir)
+        return pd.DataFrame(), pd.DataFrame()
+
+    log.info("  reading %s ...", nhanes_file)
+    needed_cols = {"DR1IFDCD", "DRXFCLD", "DRXFCSD", "DR1IGRMS"} | set(_NHANES_NUTRIENT_MAP.keys())
+    df = pd.read_csv(nhanes_file, usecols=lambda c: c in needed_cols, low_memory=False)
+
+    # Replace anomalous sentinel with NaN
+    df.replace(_NHANES_SENTINEL, np.nan, inplace=True)
+
+    # Drop rows without a food code or valid gram weight
+    df = df.dropna(subset=["DR1IFDCD", "DR1IGRMS"])
+    df = df[df["DR1IGRMS"] > 0]
+
+    df["DR1IFDCD"] = df["DR1IFDCD"].astype(int)
+
+    # Exclude foods already covered by USDA data
+    new_mask = ~df["DR1IFDCD"].isin(existing_fdc_ids)
+    df_new = df[new_mask].copy()
+    n_overlap = (~new_mask).sum()
+    log.info(
+        "  %d total NHANES records | %d overlap with USDA (skipped) | %d new records",
+        len(df), n_overlap, len(df_new),
+    )
+
+    if df_new.empty:
+        log.info("  No new NHANES foods to add.")
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Normalise nutrient columns to per-100g
+    nutrient_cols = [c for c in _NHANES_NUTRIENT_MAP if c in df_new.columns]
+    for col in nutrient_cols:
+        df_new[col] = pd.to_numeric(df_new[col], errors="coerce") / df_new["DR1IGRMS"] * 100
+
+    # Aggregate: one row per unique food code
+    # Description: most common long description for that food code
+    desc_map = (
+        df_new.groupby("DR1IFDCD")["DRXFCLD"]
+        .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else x.iloc[0])
+    )
+    short_map = (
+        df_new.groupby("DR1IFDCD")["DRXFCSD"]
+        .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else x.iloc[0])
+    )
+    nutrient_means = df_new.groupby("DR1IFDCD")[nutrient_cols].mean()
+
+    # Map FNDDS code prefix → food category
+    fdc_ids = desc_map.index.tolist()
+    categories = [
+        _FNDDS_PREFIX_TO_CATEGORY.get(str(fdc_id)[:2], "NHANES")
+        for fdc_id in fdc_ids
+    ]
+
+    # Build metadata DataFrame
+    nhanes_meta = pd.DataFrame({
+        "fdc_id":        fdc_ids,
+        "description":   desc_map.values,
+        "food_category": categories,
+        "data_type":     "nhanes",
+    }).reset_index(drop=True)
+
+    # Build wide DataFrame: rename columns to standard nutrient names
+    nhanes_wide = nutrient_means.reset_index().rename(columns={"DR1IFDCD": "fdc_id"})
+    nhanes_wide.rename(columns=_NHANES_NUTRIENT_MAP, inplace=True)
+
+    log.info(
+        "  NHANES: %d unique new foods, %d nutrient columns",
+        len(nhanes_meta),
+        len(nutrient_cols),
+    )
+
+    # Store short description for use as subcategory in categories step
+    nhanes_meta["_short_desc"] = short_map.values
+
+    return nhanes_meta, nhanes_wide
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +558,11 @@ def parse_args() -> argparse.Namespace:
         default=256,
         help="Batch size for encoding (default: 256 for mpnet, 512 recommended for openai)",
     )
+    p.add_argument(
+        "--nhanes-dir",
+        default=None,
+        help="Directory containing DR1IFF_J_with_descriptions.csv (NHANES integration, optional)",
+    )
     return p.parse_args()
 
 
@@ -354,7 +585,43 @@ def main() -> None:
     build_categories(meta, data_dir)
 
     # C — wide nutrient table
-    build_foods_wide(usda_dir, data_dir, set(meta["fdc_id"].tolist()))
+    wide = build_foods_wide(usda_dir, data_dir, set(meta["fdc_id"].tolist()))
+
+    # E — NHANES integration (optional)
+    if args.nhanes_dir:
+        nhanes_dir = Path(args.nhanes_dir)
+        nhanes_meta, nhanes_wide = build_nhanes(nhanes_dir, set(meta["fdc_id"].tolist()))
+
+        if not nhanes_meta.empty:
+            # Append NHANES foods to food_metadata.csv
+            short_descs = nhanes_meta.pop("_short_desc")
+            combined_meta = pd.concat([meta, nhanes_meta], ignore_index=True)
+            combined_meta.to_csv(data_dir / "food_metadata.csv", index=False)
+            log.info(
+                "  food_metadata.csv updated: %d USDA + %d NHANES = %d total foods",
+                len(meta), len(nhanes_meta), len(combined_meta),
+            )
+
+            # Append NHANES foods to food_categories.csv
+            nhanes_cats = nhanes_meta[["fdc_id", "description", "food_category", "data_type"]].copy()
+            nhanes_cats.rename(columns={"food_category": "category"}, inplace=True)
+            nhanes_cats["subcategory"] = short_descs.values
+            nhanes_cats = nhanes_cats[["fdc_id", "description", "category", "subcategory", "data_type"]]
+            existing_cats = pd.read_csv(data_dir / "food_categories.csv")
+            combined_cats = pd.concat([existing_cats, nhanes_cats], ignore_index=True)
+            combined_cats.to_csv(data_dir / "food_categories.csv", index=False)
+            log.info("  food_categories.csv updated: %d total rows", len(combined_cats))
+
+            # Append NHANES foods to foods_wide.csv (new rows; fill missing nutrient cols with NaN)
+            combined_wide = pd.concat([wide, nhanes_wide], ignore_index=True, sort=False)
+            combined_wide.to_csv(data_dir / "foods_wide.csv", index=False)
+            log.info(
+                "  foods_wide.csv updated: %d total foods × %d nutrient columns",
+                len(combined_wide), combined_wide.shape[1] - 1,
+            )
+
+            # Use combined metadata for embedding step
+            meta = combined_meta
 
     # D — embeddings (optional)
     if args.skip_embeddings:

@@ -95,12 +95,14 @@ def parse(
     all_nutrients: bool = typer.Option(False, "--all-nutrients", help="Show full micronutrient panel for the meal"),
     foundation_threshold: float = typer.Option(0.70, "--foundation-threshold",
         help="Min cosine score to prefer a Foundation food (0=off, 1=Foundation-only)"),
+    no_nhanes: bool = typer.Option(True, "--no-nhanes/--include-nhanes", help="Exclude NHANES foods from retrieval (default: on)"),
     data_dir: str = typer.Option(None, envvar="FOODSCRIBE_DATA_DIR", help="Data directory path"),
 ) -> None:
     """Parse a meal description and return USDA nutrient profile."""
     ddir = Path(data_dir) if data_dir else DATA_DIR
     llm, retriever, nut_lookup, analyser = _make_pipeline(provider, model, top_k, ddir,
                                                            foundation_threshold=foundation_threshold)
+    exclude_dt = ["nhanes"] if no_nhanes else None
 
     typer.echo(f"Provider: {llm.provider} ({llm.model})")
 
@@ -124,28 +126,62 @@ def parse(
         typer.echo(json.dumps([dataclasses.asdict(i) for i in items], indent=2))
         return
 
-    # Stage 2: retrieve fdc_ids
-    # Pass meal_text as context so MPNet can disambiguate by preparation style
-    queries = [item.item for item in items]
-    contexts = [meal_text] * len(queries)
-    batch_results = retriever.retrieve_batch(queries, top_k=top_k, contexts=contexts)
+    # Stage 2: resolve fdc_ids — NDB-first, semantic fallback
+    import pandas as pd
+    _ndb_map_path = ddir / "ndb_to_fdc.csv"
+    _ndb_to_fdc: dict[int, int] = {}
+    if _ndb_map_path.exists():
+        _ndb_df = pd.read_csv(_ndb_map_path, usecols=["ndb_number", "fdc_id", "data_type"])
+        # Prefer Foundation > SR Legacy > Survey when same NDB maps to multiple FDC IDs
+        _type_rank = {"Foundation": 0, "SR Legacy": 1, "survey_fndds": 2}
+        _ndb_df["_rank"] = _ndb_df["data_type"].map(lambda t: _type_rank.get(t, 9))
+        _ndb_df = _ndb_df.sort_values("_rank").drop_duplicates(subset=["ndb_number"], keep="first")
+        _ndb_to_fdc = dict(zip(_ndb_df["ndb_number"].astype(int), _ndb_df["fdc_id"].astype(int)))
+
+    # Separate items into NDB-resolved vs needs-semantic-retrieval
+    ndb_resolved: dict[int, int] = {}   # item index -> fdc_id
+    needs_retrieval: list[int] = []
+
+    for idx, item in enumerate(items):
+        ndb = item.ndb_number
+        if ndb and ndb in _ndb_to_fdc:
+            ndb_resolved[idx] = _ndb_to_fdc[ndb]
+        else:
+            if ndb:
+                typer.echo(f"  [fallback] '{item.item}' NDB {ndb} not found — using semantic retrieval", err=True)
+            needs_retrieval.append(idx)
+
+    # Run semantic retrieval only for items that need it
+    semantic_results: dict[int, list] = {}
+    if needs_retrieval:
+        queries = [items[i].item for i in needs_retrieval]
+        contexts = [meal_text] * len(queries)
+        batch = retriever.retrieve_batch(queries, top_k=top_k, contexts=contexts, exclude_data_types=exclude_dt)
+        for idx, candidates in zip(needs_retrieval, batch):
+            semantic_results[idx] = candidates
 
     # Stage 3: nutrient lookup
     from foodscribe.nutrients.lookup import NutrientRow
+    from foodscribe.retrieval.openai_retriever import RetrievalResult
     rows: list[NutrientRow] = []
-    for item, candidates in zip(items, batch_results):
-        if not candidates:
-            typer.echo(f"[warning] No match found for '{item.item}'", err=True)
-            continue
-        best = candidates[0]
-        if item.grams:
-            row = nut_lookup.get_scaled(best.fdc_id, item.grams)
+    for idx, item in enumerate(items):
+        if idx in ndb_resolved:
+            fdc_id = ndb_resolved[idx]
+            source = f"NDB {fdc_id}"
+            candidates = None
         else:
-            row = nut_lookup.get(best.fdc_id)
+            candidates = semantic_results.get(idx, [])
+            if not candidates:
+                typer.echo(f"[warning] No match found for '{item.item}'", err=True)
+                continue
+            fdc_id = candidates[0].fdc_id
+            source = f"semantic ({candidates[0].description})"
+
+        grams_val = item.grams if item.grams is not None else 0.0
+        row = nut_lookup.get_scaled(fdc_id, grams_val)
         if row is None:
-            typer.echo(f"[warning] No nutrient data for fdc_id {best.fdc_id} ('{best.description}')", err=True)
+            typer.echo(f"[warning] No nutrient data for fdc_id {fdc_id} [{source}]", err=True)
             continue
-        # Attach retrieval metadata for display
         row._confidence = item.confidence
         row._grams = item.grams
         rows.append(row)
@@ -412,8 +448,8 @@ def batch_parse(
                 processed += 1
                 continue
 
-            for item in items:
-                records.append({
+            row_records = [
+                {
                     "row":        idx,
                     **extra,
                     "meal":       meal_text,
@@ -422,17 +458,22 @@ def batch_parse(
                     "unit":       item.unit,
                     "grams":      item.grams,
                     "confidence": item.confidence,
-                })
-            typer.echo(f"  row {idx}: {len(items)} ingredient(s)")
-            processed += 1
-
-        if records:
-            new_df = pd.DataFrame(records)
+                    "ndb_number": item.ndb_number,
+                }
+                for item in items
+            ]
+            records.extend(row_records)
+            # Flush to disk after every row so interruptions don't lose progress
+            new_df = pd.DataFrame(row_records)
             if out_path.exists():
                 new_df.to_csv(out_path, mode="a", header=False, index=False)
             else:
                 new_df.to_csv(out_path, index=False)
-            typer.echo(f"  -> {out_path}  (+{len(records)} rows)")
+            typer.echo(f"  row {idx}: {len(items)} ingredient(s)")
+            processed += 1
+
+        if records:
+            typer.echo(f"  -> {out_path}  ({len(records)} rows total)")
 
         _parse_file_stats.append({
             "file": csv_path.name,
@@ -520,6 +561,18 @@ def batch_nutrients(
     cat_lookup = CategoryLookup(data_dir=ddir)
     nut_lookup = NutrientLookup(data_dir=ddir, category_lookup=cat_lookup)
     analyser = MealAnalyser()
+
+    # NDB -> FDC lookup table (built from USDA source files)
+    _ndb_to_fdc: dict[int, int] = {}
+    _ndb_map_path = ddir / "ndb_to_fdc.csv"
+    if _ndb_map_path.exists():
+        _ndb_df = pd.read_csv(_ndb_map_path, usecols=["ndb_number", "fdc_id", "data_type"])
+        _type_rank = {"Foundation": 0, "SR Legacy": 1, "survey_fndds": 2}
+        _ndb_df["_rank"] = _ndb_df["data_type"].map(lambda t: _type_rank.get(t, 9))
+        _ndb_df = _ndb_df.sort_values("_rank").drop_duplicates(subset=["ndb_number"], keep="first")
+        _ndb_to_fdc = dict(zip(_ndb_df["ndb_number"].astype(int), _ndb_df["fdc_id"].astype(int)))
+        typer.echo(f"NDB->FDC map loaded: {len(_ndb_to_fdc):,} entries")
+
     typer.echo(f"Processing {len(parsed_files)} file(s) from {in_dir}/ -> {out_dir}/\n")
 
     _nutrients_file_stats: list[dict] = []
@@ -546,14 +599,36 @@ def batch_nutrients(
             ingredients = grp["ingredient"].tolist()
             grams_list  = grp["grams"].tolist()
             conf_list   = grp["confidence"].tolist()
+            ndb_list    = grp["ndb_number"].tolist() if "ndb_number" in grp.columns else [None] * len(ingredients)
 
-            batch_results = retriever.retrieve_batch(ingredients, top_k=top_k)
+            # NDB-first: resolve what we can, semantic-retrieve the rest
+            ndb_resolved: dict[int, int] = {}
+            needs_retrieval: list[int] = []
+            for i, ndb_raw in enumerate(ndb_list):
+                ndb = int(ndb_raw) if pd.notna(ndb_raw) and ndb_raw not in (None, "", "none") else None
+                if ndb and ndb in _ndb_to_fdc:
+                    ndb_resolved[i] = _ndb_to_fdc[ndb]
+                else:
+                    needs_retrieval.append(i)
+
+            semantic_results: dict[int, list] = {}
+            if needs_retrieval:
+                queries = [ingredients[i] for i in needs_retrieval]
+                batch = retriever.retrieve_batch(queries, top_k=top_k, exclude_data_types=["nhanes"])
+                for i, cands in zip(needs_retrieval, batch):
+                    semantic_results[i] = cands
+
             rows = []
-            for ingredient, grams, conf, cands in zip(ingredients, grams_list, conf_list, batch_results):
-                if not cands:
-                    continue
-                grams_val = float(grams) if pd.notna(grams) else None
-                row = nut_lookup.get_scaled(cands[0].fdc_id, grams_val) if grams_val is not None else nut_lookup.get(cands[0].fdc_id)
+            for i, (ingredient, grams, conf) in enumerate(zip(ingredients, grams_list, conf_list)):
+                if i in ndb_resolved:
+                    fdc_id = ndb_resolved[i]
+                else:
+                    cands = semantic_results.get(i, [])
+                    if not cands:
+                        continue
+                    fdc_id = cands[0].fdc_id
+                grams_val = float(grams) if pd.notna(grams) else 0.0
+                row = nut_lookup.get_scaled(fdc_id, grams_val)
                 if row:
                     row._confidence = int(conf) if pd.notna(conf) else None
                     row._grams = grams_val
@@ -732,8 +807,8 @@ def ingredient_lookup(
             typer.echo(f"  [no match] {ingredient}")
             continue
         best = cands[0]
-        grams_val = float(grams) if pd.notna(grams) else None
-        row = nut_lookup.get_scaled(best.fdc_id, grams_val) if grams_val is not None else nut_lookup.get(best.fdc_id)
+        grams_val = float(grams) if pd.notna(grams) else 0.0
+        row = nut_lookup.get_scaled(best.fdc_id, grams_val)
         if not row:
             typer.echo(f"  [no nutrients] {ingredient} -> {best.description}")
             continue

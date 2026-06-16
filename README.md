@@ -4,10 +4,19 @@ LLM-powered food diary parser with USDA nutrient lookup.
 
 FoodScribe turns free-text meal descriptions into structured nutrient profiles grounded in the USDA FoodData Central database. It uses a four-stage pipeline:
 
-1. **LLM parsing** — breaks a meal description into individual ingredients with estimated quantities
-2. **Semantic retrieval** — matches each ingredient to a USDA food entry using OpenAI `text-embedding-3-large` embeddings (falls back to MPNet if OpenAI index is not present)
+1. **LLM parsing** — breaks a meal description into individual ingredients with estimated quantities and NDB numbers
+2. **Two-stage food matching** — first tries to resolve ingredients via LLM-suggested NDB numbers against a prebuilt USDA lookup table; falls back to semantic retrieval using OpenAI `text-embedding-3-large` embeddings (3072-dim) for any unresolved items
 3. **Nutrient lookup** — pulls exact USDA nutrient values (macros + micros) for the matched food, scaled to gram weight
 4. **Stats & visualisation** — aggregates nutrients per meal, per day, or across a batch
+
+### Two-stage food matching
+
+The retrieval step uses a hybrid approach to maximise both speed and accuracy:
+
+- **Stage 1 — NDB lookup**: The LLM suggests an NDB number for each ingredient. FoodScribe validates it against a prebuilt `ndb_to_fdc.csv` table (8,158 entries compiled from USDA Foundation, SR Legacy, and Survey FNDDS sources). When the NDB number is valid, the food is resolved instantly without any API call.
+- **Stage 2 — Semantic fallback**: If the LLM's NDB number is missing, hallucinated, or not found in the table, FoodScribe embeds the ingredient name using OpenAI `text-embedding-3-large` and performs cosine similarity search against the full USDA index (~18,000 foods including NHANES). Foundation foods are preferred when a strong match exists.
+
+Text normalisation (lowercase, remove parentheses and `%`) is applied identically at index build time and query time to ensure embedding space consistency.
 
 ---
 
@@ -27,19 +36,20 @@ pip install -e .
 
 ## Data Setup
 
-Download the four pre-built data files and place them in the `data/` folder:
+Download the five pre-built data files and place them in the `data/` folder:
 
 | File | Description |
 |------|-------------|
-| `food_metadata.csv` | Food descriptions and categories |
+| `food_metadata.csv` | Food descriptions and categories (~18,000 foods: USDA + NHANES) |
 | `food_categories.csv` | Category/subcategory per food |
-| `foods_wide.csv` | All nutrients per food (wide format) |
+| `foods_wide.csv` | All nutrients per food (wide format, per 100g) |
 | `food_embeddings_openai.npy` | 3072-dim OpenAI `text-embedding-3-large` embeddings for semantic search |
+| `ndb_to_fdc.csv` | NDB number to FDC ID mapping (8,158 entries from USDA source files) |
 
 > **Download:** [10.5281/zenodo.18990542](https://doi.org/10.5281/zenodo.18990542)
 
 ```bash
-# After downloading, move all four files into:
+# After downloading, move all files into:
 data/
 ```
 
@@ -49,9 +59,12 @@ To rebuild the index from raw USDA source data (requires an OpenAI API key):
 
 ```bash
 python scripts/build_data.py --usda-dir ../USDA_data/ --embedder openai
+
+# Also include NHANES dietary survey data (~4,600 additional foods):
+python scripts/build_data.py --usda-dir ../USDA_data/ --nhanes-dir ../USDA_data/NHANES/ --embedder openai
 ```
 
-This writes `data/food_embeddings_openai.npy`. FoodScribe falls back to the MPNet index (`food_embeddings_mpnet.npy`) only if the OpenAI index is not present.
+This writes `data/food_embeddings_openai.npy` (3072-dim, `text-embedding-3-large`). FoodScribe falls back to the MPNet index (`food_embeddings_mpnet.npy`) only if the OpenAI index is not present.
 
 ---
 
@@ -66,7 +79,7 @@ cp .env.example .env
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Anthropic API key |
-| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENAI_API_KEY` | OpenAI API key (also used for embeddings) |
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
 | `GOOGLE_API_KEY` | Google Gemini API key |
 | `FOODSCRIBE_LLM_PROVIDER` | Default provider (`anthropic`, `openai`, `deepseek`, `gemini`) |
@@ -114,6 +127,14 @@ With full micronutrient panel:
 foodscribe parse "2 scrambled eggs with toast" --all-nutrients
 ```
 
+Exclude NHANES foods from retrieval (USDA-only, default):
+
+```bash
+foodscribe parse "1 cup of coffee" --no-nhanes
+# To include NHANES foods:
+foodscribe parse "1 cup of coffee" --include-nhanes
+```
+
 ### Batch process a food journal CSV
 
 ```bash
@@ -123,7 +144,7 @@ foodscribe batch-parse input/journal.csv --meal-col meal --limit 200
 # Step 2 — Nutrient lookup
 foodscribe batch-nutrients
 
-# Resume an interrupted run
+# Resume an interrupted run (progress is saved after every row)
 foodscribe batch-parse input/journal.csv --run-id run_20260311_173822 --limit 200
 ```
 
@@ -144,6 +165,16 @@ foodscribe ingredient-lookup input/foods.csv --ingredient-col FoodName --grams-c
 # Or use the standalone script
 python scripts/ingredient_lookup.py input/food_ingredients.csv
 ```
+
+### Multi-provider comparison
+
+Run the same dataset through multiple LLM providers for comparison:
+
+```bash
+python scripts/run_provider_comparison.py --limit 500
+```
+
+Produces one timestamped output folder per provider under `output/`.
 
 ### Aggregate to daily totals
 
@@ -170,6 +201,12 @@ foodscribe categories --filter "Poultry Products"
 | `deepseek` | deepseek-chat |
 | `gemini` | gemini-1.5-flash |
 
+Override the model with `--model`:
+
+```bash
+foodscribe batch-parse input/journal.csv --provider anthropic --model claude-sonnet-4-6
+```
+
 ---
 
 ## Output Files
@@ -181,7 +218,7 @@ Produces timestamped folders under `output/`:
 ```
 output/
 └── run_20260311_173822/
-    ├── journal_parsed.csv      # LLM output: one row per ingredient
+    ├── journal_parsed.csv      # LLM output: one row per ingredient (includes ndb_number)
     ├── journal_summary.csv     # Per-meal totals: all macro + micro nutrients
     ├── journal_detail.csv      # Per-ingredient USDA match + scaled nutrients
     ├── journal_food_items.csv  # Pivot: rows=meals, columns=USDA food items (grams)
@@ -201,10 +238,10 @@ input/
 |--------|-------------|
 | `meal` | Original meal text |
 | `ingredients` | Semicolon-separated ingredient list |
-| `avg_confidence` | Mean LLM confidence score (1–5) |
+| `avg_confidence` | Mean LLM confidence score (1-5) |
 | `item_count` | Number of matched USDA ingredients |
 | `dominant_category` | USDA category contributing most energy |
-| `energy_kcal`, `protein_g`, … | All nutrients summed across ingredients |
+| `energy_kcal`, `protein_g`, ... | All nutrients summed across ingredients |
 
 ### Detail columns (`*_detail.csv`)
 
@@ -215,8 +252,8 @@ input/
 | `usda_match` | Matched USDA food description |
 | `grams` | Gram weight used for scaling |
 | `category` / `subcategory` | USDA food category |
-| `data_type` | Foundation, SR Legacy, or Survey |
-| `confidence` | LLM confidence score (1–5) |
+| `data_type` | Foundation, SR Legacy, Survey, or NHANES |
+| `confidence` | LLM confidence score (1-5) |
 | all nutrient columns | Scaled to gram weight |
 
 ---
@@ -226,13 +263,13 @@ input/
 ### Large batch with resume support
 
 ```bash
-# First run — auto-creates output/run_YYYYMMDD_HHMMSS/
+# First run -- auto-creates output/run_YYYYMMDD_HHMMSS/
 foodscribe batch-parse input/journal.csv --limit 200
 
 # Resume (same run folder, skips already-processed rows)
 foodscribe batch-parse input/journal.csv --run-id run_20260311_173822 --limit 200
 
-# Nutrient retrieval — auto-detects latest run folder
+# Nutrient retrieval -- auto-detects latest run folder
 foodscribe batch-nutrients
 
 # Roll up to daily totals per subject

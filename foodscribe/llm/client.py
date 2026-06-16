@@ -28,6 +28,7 @@ class FoodItem:
     unit: str | None
     grams: float | None
     confidence: int  # 1–5
+    ndb_number: int | None = None  # LLM-suggested FDC/NDB ID; None if not provided or invalid
 
 
 class LLMClient:
@@ -67,7 +68,7 @@ class LLMClient:
     # Public API
     # ------------------------------------------------------------------
 
-    def parse_meal(self, meal_text: str) -> list[FoodItem]:
+    def parse_meal(self, meal_text: str, _retry: int = 0) -> list[FoodItem]:
         """Call the LLM with SYSTEM_PROMPT + meal_text, return list of FoodItem objects."""
         if self.provider == "anthropic":
             raw = self._call_anthropic(meal_text)
@@ -80,7 +81,14 @@ class LLMClient:
         else:
             raise ValueError(f"Unknown provider: {self.provider!r}")
 
-        return self._parse_response(raw)
+        try:
+            return self._parse_response(raw)
+        except ParseError:
+            if _retry < 2:
+                import time
+                time.sleep(1)
+                return self.parse_meal(meal_text, _retry=_retry + 1)
+            raise
 
     @classmethod
     def list_providers(cls) -> list[str]:
@@ -107,7 +115,7 @@ class LLMClient:
             try:
                 response = client.messages.create(
                     model=self.model,
-                    max_tokens=1024,
+                    max_tokens=4096,
                     system=system,
                     messages=[{"role": "user", "content": meal_text}],
                 )
@@ -120,17 +128,25 @@ class LLMClient:
 
     def _call_openai_compat(self, meal_text: str, base_url: str) -> str:
         import openai
+        import time
         client = openai.OpenAI(base_url=base_url, api_key=self.api_key)
         system = SYSTEM_PROMPT.format(meal_description=meal_text)
-        response = client.chat.completions.create(
-            model=self.model,
-            max_tokens=1024,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": meal_text},
-            ],
-        )
-        return response.choices[0].message.content
+        # gpt-5+ models use max_completion_tokens; older models use max_tokens
+        token_param = "max_completion_tokens" if "gpt-5" in self.model else "max_tokens"
+        for attempt in range(3):
+            response = client.chat.completions.create(
+                model=self.model,
+                **{token_param: 4096},
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": meal_text},
+                ],
+            )
+            content = response.choices[0].message.content
+            if content:
+                return content
+            time.sleep(1)
+        raise ParseError("Model returned empty response after 3 attempts", "")
 
     def _call_gemini(self, meal_text: str) -> str:
         import google.generativeai as genai
@@ -161,11 +177,15 @@ class LLMClient:
     def _parse_response(self, raw: str) -> list[FoodItem]:
         # Strip markdown fences if present
         cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+        # Remove trailing commas before ] or } (common LLM mistake)
+        cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as exc:
             raise ParseError(f"LLM returned invalid JSON: {exc}", raw) from exc
 
+        if isinstance(data, dict):
+            data = [data]
         results: list[FoodItem] = []
         for obj in data:
             # Accept all field name variants across prompt versions
@@ -176,6 +196,16 @@ class LLMClient:
                 raise ParseError(
                     "LLM response missing required field 'confidence'", raw
                 )
+
+            # Parse LLM-suggested NDB/FDC number; treat "none", null, 0 as missing
+            raw_ndb = obj.get("NDB number") or obj.get("ndb_number") or obj.get("fdc_id")
+            ndb: int | None = None
+            if raw_ndb and str(raw_ndb).strip().lower() not in ("none", "null", "0", ""):
+                try:
+                    ndb = int(str(raw_ndb).strip())
+                except (ValueError, TypeError):
+                    ndb = None
+
             results.append(
                 FoodItem(
                     item=name,
@@ -183,6 +213,7 @@ class LLMClient:
                     unit=obj.get("unit"),
                     grams=obj.get("grams"),
                     confidence=int(obj["confidence"]),
+                    ndb_number=ndb,
                 )
             )
         return results

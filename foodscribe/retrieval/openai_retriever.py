@@ -13,6 +13,20 @@ _DIM = 3072
 _DEFAULT_BOOST: dict[str, float] = {"foundation": 0.02, "sr_legacy": 0.01}
 
 
+def _normalise_text(text: str) -> str:
+    """Harmonise food description text before embedding.
+
+    Applied identically to both index descriptions (at build time) and
+    query strings (at retrieval time) so the embedding spaces match.
+    Removes parentheses, percent signs, and lowercases everything.
+    """
+    import re
+    text = text.lower()
+    text = re.sub(r"[()%]", "", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
 @dataclass
 class RetrievalResult:
     fdc_id: int
@@ -104,22 +118,39 @@ class OpenAIRetriever:
         norms = np.where(norms == 0, 1.0, norms)
         return vecs / norms
 
-    def retrieve(self, query: str, top_k: int | None = None) -> list[RetrievalResult]:
-        return self.retrieve_batch([query], top_k=top_k)[0]
+    def retrieve(
+        self,
+        query: str,
+        top_k: int | None = None,
+        exclude_data_types: list[str] | None = None,
+    ) -> list[RetrievalResult]:
+        return self.retrieve_batch([query], top_k=top_k, exclude_data_types=exclude_data_types)[0]
 
     def retrieve_batch(
         self,
         queries: list[str],
         top_k: int | None = None,
         contexts: list[str] | None = None,
+        exclude_data_types: list[str] | None = None,
     ) -> list[list[RetrievalResult]]:
         self._load()
         k = top_k or self._top_k
-        q_embs = self._embed(queries)
+        q_embs = self._embed([_normalise_text(q) for q in queries])
         scores = q_embs @ self._embeddings.T  # (n_queries, n_foods)
+
+        # Build a mask of rows to exclude (-inf so they never rank)
+        if exclude_data_types:
+            exclude_set = {dt.lower() for dt in exclude_data_types}
+            exclude_mask = self._metadata["data_type"].str.lower().isin(exclude_set).values
+        else:
+            exclude_mask = None
 
         results: list[list[RetrievalResult]] = []
         for i, row_scores in enumerate(scores):
+            if exclude_mask is not None:
+                row_scores = row_scores.copy()
+                row_scores[exclude_mask] = -np.inf
+
             # Try foundation-only first; fall back to full index if no strong match
             f_scores = q_embs[i] @ self._foundation_embeddings.T
             best_f = float(f_scores.max()) if len(f_scores) > 0 else 0.0
